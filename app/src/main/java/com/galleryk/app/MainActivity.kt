@@ -23,10 +23,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -97,11 +96,9 @@ suspend fun loadGallery(
             val idCol = cursor.getColumnIndexOrThrow(
                 MediaStore.Images.Media._ID
             )
-
             val bucketCol = cursor.getColumnIndexOrThrow(
                 MediaStore.Images.Media.BUCKET_ID
             )
-
             val nameCol = cursor.getColumnIndexOrThrow(
                 MediaStore.Images.Media.BUCKET_DISPLAY_NAME
             )
@@ -148,10 +145,7 @@ suspend fun loadBitmap(
         }
 
         var sample = 1
-
-        while (
-            maxOf(bounds.outWidth, bounds.outHeight) / sample > maxSize
-        ) {
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxSize) {
             sample *= 2
         }
 
@@ -162,7 +156,6 @@ suspend fun loadBitmap(
         context.contentResolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, options)
         }
-
     } catch (_: Exception) {
         null
     }
@@ -170,7 +163,6 @@ suspend fun loadBitmap(
 
 @Composable
 fun GalleryKApp() {
-
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -206,7 +198,6 @@ fun GalleryKApp() {
         rememberLauncherForActivityResult(
             ActivityResultContracts.StartIntentSenderForResult()
         ) { result ->
-
             if (result.resultCode == android.app.Activity.RESULT_OK) {
                 selectedUris = emptySet()
                 selectionMode = false
@@ -255,7 +246,6 @@ fun GalleryKApp() {
                     targets.forEach {
                         context.contentResolver.delete(it, null, null)
                     }
-
                     withContext(Dispatchers.Main) {
                         refresh++
                         selectedUris = emptySet()
@@ -263,7 +253,7 @@ fun GalleryKApp() {
                     }
                 }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             android.widget.Toast.makeText(
                 context,
                 "Unable to delete photos",
@@ -283,7 +273,6 @@ fun GalleryKApp() {
                 selectionMode = false
                 selectedUris = emptySet()
             }
-
             selectedIndex >= 0 -> selectedIndex = -1
             albumId != null -> albumId = null
             else -> tab = "Photos"
@@ -295,12 +284,7 @@ fun GalleryKApp() {
             modifier = Modifier.fillMaxSize(),
             color = Color(0xFF101114)
         ) {
-
-            if (
-                selectedIndex >= 0 &&
-                selectedIndex < displayedPhotos.size
-            ) {
-
+            if (selectedIndex >= 0 && selectedIndex < displayedPhotos.size) {
                 FullScreenPhoto(
                     photos = displayedPhotos,
                     initialIndex = selectedIndex,
@@ -310,31 +294,24 @@ fun GalleryKApp() {
                         selectedIndex = -1
                     }
                 )
-
             } else {
-
                 Column(Modifier.fillMaxSize()) {
-
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .padding(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-
                         Column(Modifier.weight(1f)) {
                             Text(
-                                if (selectionMode)
-                                    "${selectedUris.size} Selected"
+                                if (selectionMode) "${selectedUris.size} Selected"
                                 else "Gallery K",
                                 color = Color.White,
                                 fontSize = 27.sp,
                                 fontWeight = FontWeight.Bold
                             )
-
                             Text(
-                                if (selectionMode)
-                                    "Select your photos"
+                                if (selectionMode) "Select your photos"
                                 else "Your memories, beautifully organized",
                                 color = Color.Gray,
                                 fontSize = 12.sp
@@ -348,11 +325,8 @@ fun GalleryKApp() {
                                         if (
                                             displayedPhotos.isNotEmpty() &&
                                             selectedUris.containsAll(displayedPhotos)
-                                        ) {
-                                            emptySet()
-                                        } else {
-                                            displayedPhotos.toSet()
-                                        }
+                                        ) emptySet()
+                                        else displayedPhotos.toSet()
                                 }
                             ) {
                                 Text(
@@ -367,14 +341,12 @@ fun GalleryKApp() {
                     }
 
                     if (selectionMode) {
-
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-
                             Button(
                                 modifier = Modifier.weight(1f),
                                 enabled = selectedUris.isNotEmpty(),
@@ -395,16 +367,13 @@ fun GalleryKApp() {
                                 Text("Cancel")
                             }
                         }
-
                     } else {
-
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-
                             listOf("Photos", "Albums").forEach {
                                 val active = tab == it
 
@@ -434,7 +403,6 @@ fun GalleryKApp() {
                     Spacer(Modifier.height(14.dp))
 
                     when {
-
                         !permissionGranted -> {
                             Box(
                                 Modifier.fillMaxSize(),
@@ -460,7 +428,6 @@ fun GalleryKApp() {
                         }
 
                         tab == "Albums" && albumId == null -> {
-
                             Text(
                                 "${albums.size} Albums",
                                 color = Color.White,
@@ -492,7 +459,6 @@ fun GalleryKApp() {
                         }
 
                         else -> {
-
                             Text(
                                 "${displayedPhotos.size} Photos",
                                 color = Color.LightGray,
@@ -506,104 +472,12 @@ fun GalleryKApp() {
                                 columns = GridCells.Fixed(3),
                                 state = gridState,
                                 contentPadding = PaddingValues(3.dp),
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .pointerInput(displayedPhotos) {
-
-                                        var lastIndex = -1
-
-                                        detectDragGesturesAfterLongPress(
-                                            onDragStart = { position ->
-
-                                                val visible =
-                                                    gridState.layoutInfo.visibleItemsInfo
-
-                                                val hit = visible.firstOrNull { item ->
-                                                    val left = item.offset.x.toFloat()
-                                                    val top = item.offset.y.toFloat()
-
-                                                    position.x >= left &&
-                                                        position.x < left + item.size.width &&
-                                                        position.y >= top &&
-                                                        position.y < top + item.size.height
-                                                }
-
-                                                if (
-                                                    hit != null &&
-                                                    hit.index in displayedPhotos.indices
-                                                ) {
-                                                    selectionMode = true
-                                                    lastIndex = hit.index
-
-                                                    selectedUris =
-                                                        selectedUris +
-                                                            displayedPhotos[hit.index]
-                                                }
-                                            },
-
-                                            onDrag = { change, _ ->
-
-                                                val position = change.position
-
-                                                val visible =
-                                                    gridState.layoutInfo.visibleItemsInfo
-
-                                                val hit = visible.firstOrNull { item ->
-                                                    val left = item.offset.x.toFloat()
-                                                    val top = item.offset.y.toFloat()
-
-                                                    position.x >= left &&
-                                                        position.x < left + item.size.width &&
-                                                        position.y >= top &&
-                                                        position.y < top + item.size.height
-                                                }
-
-                                                if (
-                                                    hit != null &&
-                                                    hit.index in displayedPhotos.indices &&
-                                                    lastIndex != hit.index
-                                                ) {
-                                                    selectionMode = true
-                                                    lastIndex = hit.index
-
-                                                    selectedUris =
-                                                        selectedUris +
-                                                            displayedPhotos[hit.index]
-                                                }
-
-                                                val edge = 100.dp.toPx()
-
-                                                if (position.y < edge) {
-                                                    scope.launch {
-                                                        gridState.scrollBy(-25f)
-                                                    }
-                                                } else if (
-                                                    position.y > size.height - edge
-                                                ) {
-                                                    scope.launch {
-                                                        gridState.scrollBy(25f)
-                                                    }
-                                                }
-
-                                                change.consume()
-                                            },
-
-                                            onDragEnd = {
-                                                lastIndex = -1
-                                            },
-
-                                            onDragCancel = {
-                                                lastIndex = -1
-                                            }
-                                        )
-                                    }
+                                modifier = Modifier.fillMaxSize()
                             ) {
-
                                 itemsIndexed(
                                     displayedPhotos,
                                     key = { _, uri -> uri.toString() }
                                 ) { index, photo ->
-
                                     PhotoThumbnail(
                                         uri = photo,
                                         selected = photo in selectedUris,
@@ -650,7 +524,6 @@ fun AlbumCard(
             .clickable { onClick() }
             .padding(8.dp)
     ) {
-
         if (album.photos.isNotEmpty()) {
             PhotoThumbnail(
                 uri = album.photos.first(),
@@ -683,7 +556,6 @@ fun PhotoThumbnail(
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick
 ) {
-
     val context = LocalContext.current
 
     val bitmap by produceState<Bitmap?>(null, uri) {
@@ -701,7 +573,6 @@ fun PhotoThumbnail(
             ),
         contentAlignment = Alignment.Center
     ) {
-
         bitmap?.let {
             Image(
                 bitmap = it.asImageBitmap(),
@@ -745,7 +616,6 @@ fun FullScreenPhoto(
     onBack: () -> Unit,
     onDelete: (Uri) -> Unit
 ) {
-
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -795,19 +665,13 @@ fun FullScreenPhoto(
         scope.launch {
             try {
                 val manager = WallpaperManager.getInstance(context)
-
                 val stream = context.contentResolver.openInputStream(
                     photos[index]
                 ) ?: throw IllegalStateException("Cannot open photo")
 
                 stream.use {
                     if (Build.VERSION.SDK_INT >= 24) {
-                        manager.setStream(
-                            it,
-                            null,
-                            true,
-                            which
-                        )
+                        manager.setStream(it, null, true, which)
                     } else {
                         manager.setStream(it)
                     }
@@ -818,7 +682,6 @@ fun FullScreenPhoto(
                     "Wallpaper set successfully",
                     android.widget.Toast.LENGTH_SHORT
                 ).show()
-
             } catch (_: Exception) {
                 android.widget.Toast.makeText(
                     context,
@@ -834,14 +697,12 @@ fun FullScreenPhoto(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-
         Row(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-
             Text(
                 "‹",
                 color = Color.White,
@@ -858,14 +719,21 @@ fun FullScreenPhoto(
             )
 
             Box {
-                Text(
-                    "⋮",
-                    color = Color.White,
-                    fontSize = 30.sp,
-                    modifier = Modifier.clickable {
-                        menuExpanded = true
-                    }
-                )
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .clickable {
+                            menuExpanded = true
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "⋮",
+                        color = Color.White,
+                        fontSize = 30.sp
+                    )
+                }
 
                 DropdownMenu(
                     expanded = menuExpanded,
@@ -873,7 +741,6 @@ fun FullScreenPhoto(
                         menuExpanded = false
                     }
                 ) {
-
                     DropdownMenuItem(
                         text = { Text("Share") },
                         onClick = {
@@ -916,7 +783,6 @@ fun FullScreenPhoto(
                 .clipToBounds()
                 .pointerInput(index, bitmap) {
                     detectTransformGestures { _, pan, zoom, _ ->
-
                         scale = (scale * zoom).coerceIn(1f, 5f)
 
                         if (scale > 1f) {
@@ -930,18 +796,11 @@ fun FullScreenPhoto(
                         val maxOffsetX = size.width * (scale - 1f) / 2f
                         val maxOffsetY = size.height * (scale - 1f) / 2f
 
-                        offsetX = offsetX.coerceIn(
-                            -maxOffsetX,
-                            maxOffsetX
-                        )
-
-                        offsetY = offsetY.coerceIn(
-                            -maxOffsetY,
-                            maxOffsetY
-                        )
+                        offsetX = offsetX.coerceIn(-maxOffsetX, maxOffsetX)
+                        offsetY = offsetY.coerceIn(-maxOffsetY, maxOffsetY)
                     }
                 }
-                .pointerInput(index, scale) {
+                .pointerInput(index) {
                     detectTapGestures(
                         onDoubleTap = {
                             if (scale > 1f) {
@@ -955,10 +814,12 @@ fun FullScreenPhoto(
                     )
                 }
                 .pointerInput(index, scale) {
-
                     var swipe = 0f
 
-                    detectDragGesturesAfterLongPress(
+                    detectDragGestures(
+                        onDragStart = {
+                            swipe = 0f
+                        },
                         onDrag = { change, amount ->
                             if (scale <= 1.01f) {
                                 swipe += amount.x
@@ -967,19 +828,12 @@ fun FullScreenPhoto(
                         },
                         onDragEnd = {
                             if (abs(swipe) > size.width * 0.2f) {
-                                if (
-                                    swipe < 0 &&
-                                    index < photos.lastIndex
-                                ) {
+                                if (swipe < 0 && index < photos.lastIndex) {
                                     index++
-                                } else if (
-                                    swipe > 0 &&
-                                    index > 0
-                                ) {
+                                } else if (swipe > 0 && index > 0) {
                                     index--
                                 }
                             }
-
                             swipe = 0f
                         },
                         onDragCancel = {
@@ -989,9 +843,7 @@ fun FullScreenPhoto(
                 },
             contentAlignment = Alignment.Center
         ) {
-
             when {
-
                 loading -> {
                     CircularProgressIndicator(color = Color.White)
                 }
@@ -1028,7 +880,6 @@ fun FullScreenPhoto(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-
             Text(
                 "‹ Previous",
                 color = if (index > 0) Color.White else Color.Gray,
@@ -1048,7 +899,6 @@ fun FullScreenPhoto(
     }
 
     if (detailsOpen) {
-
         val uri = photos[index]
 
         var name = "Unknown"
@@ -1070,7 +920,6 @@ fun FullScreenPhoto(
                 null,
                 null
             )?.use { cursor ->
-
                 if (cursor.moveToFirst()) {
                     name = cursor.getString(0) ?: "Unknown"
                     size = "${cursor.getLong(1) / 1024} KB"
@@ -1101,9 +950,7 @@ fun FullScreenPhoto(
                 }
             },
             confirmButton = {
-                TextButton(
-                    onClick = { detailsOpen = false }
-                ) {
+                TextButton(onClick = { detailsOpen = false }) {
                     Text("OK")
                 }
             }
@@ -1128,9 +975,7 @@ fun FullScreenPhoto(
                 }
             },
             dismissButton = {
-                TextButton(
-                    onClick = { deleteDialog = false }
-                ) {
+                TextButton(onClick = { deleteDialog = false }) {
                     Text("Cancel")
                 }
             }
@@ -1145,7 +990,6 @@ fun FullScreenPhoto(
             title = { Text("Set as Wallpaper") },
             text = {
                 Column {
-
                     TextButton(
                         onClick = {
                             wallpaperDialog = false
