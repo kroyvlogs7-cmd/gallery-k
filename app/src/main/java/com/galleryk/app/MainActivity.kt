@@ -25,12 +25,15 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -47,6 +50,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.sqrt
 
+data class PhotoAlbum(
+    val id: String,
+    val name: String,
+    val photos: List<Uri>
+)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,10 +66,15 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun GalleryKApp() {
     val context = LocalContext.current
+
     var photos by remember { mutableStateOf(listOf<Uri>()) }
+    var albums by remember { mutableStateOf(listOf<PhotoAlbum>()) }
     var selectedIndex by remember { mutableIntStateOf(-1) }
+    var selectedAlbumId by remember { mutableStateOf<String?>(null) }
+    var selectedTab by remember { mutableStateOf("Photos") }
     var permissionGranted by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
+
     val gridState = rememberLazyGridState()
 
     val permission = if (Build.VERSION.SDK_INT >= 33) {
@@ -82,49 +96,118 @@ fun GalleryKApp() {
     LaunchedEffect(permissionGranted) {
         if (permissionGranted) {
             loading = true
-            photos = withContext(Dispatchers.IO) {
-                val result = mutableListOf<Uri>()
-                val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                val projection = arrayOf(MediaStore.Images.Media._ID)
-                val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+
+            val result = withContext(Dispatchers.IO) {
+                val allPhotos = mutableListOf<Uri>()
+                val albumMap = linkedMapOf<String, MutableList<Uri>>()
+                val albumNames = mutableMapOf<String, String>()
+
+                val collection =
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+
+                val projection = arrayOf(
+                    MediaStore.Images.Media._ID,
+                    MediaStore.Images.Media.BUCKET_ID,
+                    MediaStore.Images.Media.BUCKET_DISPLAY_NAME
+                )
+
+                val sortOrder =
+                    "${MediaStore.Images.Media.DATE_ADDED} DESC"
 
                 context.contentResolver.query(
-                    collection, projection, null, null, sortOrder
+                    collection,
+                    projection,
+                    null,
+                    null,
+                    sortOrder
                 )?.use { cursor ->
                     val idColumn = cursor.getColumnIndexOrThrow(
                         MediaStore.Images.Media._ID
                     )
+                    val bucketIdColumn = cursor.getColumnIndexOrThrow(
+                        MediaStore.Images.Media.BUCKET_ID
+                    )
+                    val bucketNameColumn = cursor.getColumnIndexOrThrow(
+                        MediaStore.Images.Media.BUCKET_DISPLAY_NAME
+                    )
+
                     while (cursor.moveToNext()) {
                         val id = cursor.getLong(idColumn)
-                        result.add(ContentUris.withAppendedId(collection, id))
+                        val uri = ContentUris.withAppendedId(
+                            collection, id
+                        )
+
+                        val bucketId = cursor.getString(bucketIdColumn)
+                            ?: "unknown"
+
+                        val bucketName = cursor.getString(bucketNameColumn)
+                            ?: "Other"
+
+                        allPhotos.add(uri)
+
+                        albumMap.getOrPut(bucketId) {
+                            mutableListOf()
+                        }.add(uri)
+
+                        albumNames[bucketId] = bucketName
                     }
                 }
-                result
+
+                val albumList = albumMap.map { (id, albumPhotos) ->
+                    PhotoAlbum(
+                        id = id,
+                        name = albumNames[id] ?: "Other",
+                        photos = albumPhotos
+                    )
+                }
+
+                Pair(allPhotos, albumList)
             }
+
+            photos = result.first
+            albums = result.second
             loading = false
         }
     }
 
-    BackHandler(enabled = selectedIndex >= 0) {
-        selectedIndex = -1
+    BackHandler(
+        enabled = selectedIndex >= 0 ||
+            selectedAlbumId != null ||
+            selectedTab == "Albums"
+    ) {
+        when {
+            selectedIndex >= 0 -> selectedIndex = -1
+            selectedAlbumId != null -> selectedAlbumId = null
+            selectedTab == "Albums" -> selectedTab = "Photos"
+        }
     }
+
+    val currentAlbum = albums.find {
+        it.id == selectedAlbumId
+    }
+
+    val displayedPhotos = currentAlbum?.photos ?: photos
 
     MaterialTheme {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = Color(0xFF101114)
         ) {
-            if (selectedIndex >= 0 && selectedIndex < photos.size) {
+            if (selectedIndex >= 0 &&
+                selectedIndex < displayedPhotos.size
+            ) {
                 FullScreenPhoto(
-                    photos = photos,
+                    photos = displayedPhotos,
                     initialIndex = selectedIndex,
                     onBack = { selectedIndex = -1 }
                 )
             } else {
                 Column(Modifier.fillMaxSize()) {
+
                     Column(
                         modifier = Modifier.padding(
-                            horizontal = 20.dp, vertical = 20.dp
+                            horizontal = 20.dp,
+                            vertical = 20.dp
                         )
                     ) {
                         Text(
@@ -133,6 +216,7 @@ fun GalleryKApp() {
                             fontSize = 27.sp,
                             fontWeight = FontWeight.Bold
                         )
+
                         Text(
                             "Your memories, beautifully organized",
                             color = Color.Gray,
@@ -140,13 +224,40 @@ fun GalleryKApp() {
                         )
                     }
 
-                    Text(
-                        "Photos",
-                        color = Color(0xFF8AB4F8),
-                        fontSize = 19.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(start = 20.dp, bottom = 10.dp)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        listOf("Photos", "Albums").forEach { tab ->
+                            val active = selectedTab == tab
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (active) Color(0xFF315C91)
+                                        else Color(0xFF24262C)
+                                    )
+                                    .clickable {
+                                        selectedTab = tab
+                                        selectedAlbumId = null
+                                    }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    tab,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
 
                     when {
                         !permissionGranted -> {
@@ -154,7 +265,11 @@ fun GalleryKApp() {
                                 Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Button(onClick = { launcher.launch(permission) }) {
+                                Button(
+                                    onClick = {
+                                        launcher.launch(permission)
+                                    }
+                                ) {
                                     Text("Allow Photos")
                                 }
                             }
@@ -169,21 +284,72 @@ fun GalleryKApp() {
                             }
                         }
 
-                        photos.isEmpty() -> {
+                        selectedTab == "Albums" &&
+                            selectedAlbumId == null -> {
+
+                            Text(
+                                "${albums.size} Albums",
+                                color = Color.LightGray,
+                                modifier = Modifier.padding(
+                                    start = 20.dp,
+                                    bottom = 10.dp
+                                )
+                            )
+
+                            if (albums.isEmpty()) {
+                                Box(
+                                    Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "No albums found",
+                                        color = Color.White
+                                    )
+                                }
+                            } else {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(2),
+                                    contentPadding = PaddingValues(8.dp),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    items(
+                                        albums,
+                                        key = { it.id }
+                                    ) { album ->
+                                        AlbumCard(album) {
+                                            selectedAlbumId = album.id
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        displayedPhotos.isEmpty() -> {
                             Box(
                                 Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("No photos found", color = Color.White)
+                                Text(
+                                    "No photos found",
+                                    color = Color.White
+                                )
                             }
                         }
 
                         else -> {
                             Text(
-                                "${photos.size} Photos",
+                                if (currentAlbum != null) {
+                                    "${currentAlbum.photos.size} Photos"
+                                } else {
+                                    "${photos.size} Photos"
+                                },
                                 color = Color.LightGray,
-                                modifier = Modifier.padding(start = 20.dp, bottom = 10.dp)
+                                modifier = Modifier.padding(
+                                    start = 20.dp,
+                                    bottom = 10.dp
+                                )
                             )
+
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(3),
                                 state = gridState,
@@ -191,7 +357,7 @@ fun GalleryKApp() {
                                 modifier = Modifier.fillMaxSize()
                             ) {
                                 itemsIndexed(
-                                    photos,
+                                    displayedPhotos,
                                     key = { _, uri -> uri.toString() }
                                 ) { index, photo ->
                                     PhotoThumbnail(photo) {
@@ -208,14 +374,55 @@ fun GalleryKApp() {
 }
 
 @Composable
-fun PhotoThumbnail(uri: Uri, onClick: () -> Unit) {
+fun AlbumCard(
+    album: PhotoAlbum,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .padding(5.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF24262C))
+            .clickable { onClick() }
+            .padding(8.dp)
+    ) {
+        PhotoThumbnail(
+            uri = album.photos.first(),
+            onClick = onClick
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        Text(
+            album.name,
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
+        )
+
+        Text(
+            "${album.photos.size} Photos",
+            color = Color.Gray,
+            fontSize = 12.sp
+        )
+    }
+}
+
+@Composable
+fun PhotoThumbnail(
+    uri: Uri,
+    onClick: () -> Unit
+) {
     val context = LocalContext.current
+
     val bitmap by produceState<Bitmap?>(null, uri) {
         value = withContext(Dispatchers.IO) {
             try {
                 if (Build.VERSION.SDK_INT >= 29) {
                     context.contentResolver.loadThumbnail(
-                        uri, android.util.Size(400, 400), null
+                        uri,
+                        android.util.Size(400, 400),
+                        null
                     )
                 } else {
                     context.contentResolver.openInputStream(uri)?.use {
@@ -258,6 +465,7 @@ suspend fun loadFullPhoto(
 ): Bitmap? = withContext(Dispatchers.IO) {
     try {
         val resolver = context.contentResolver
+
         val bounds = BitmapFactory.Options().apply {
             inJustDecodeBounds = true
         }
@@ -332,7 +540,9 @@ fun FullScreenPhoto(
                 fontSize = 34.sp,
                 modifier = Modifier.clickable { onBack() }
             )
+
             Spacer(Modifier.width(20.dp))
+
             Text(
                 "Photo ${currentIndex + 1} / ${photos.size}",
                 color = Color.White,
@@ -361,16 +571,25 @@ fun FullScreenPhoto(
 
                             if (pressed.size >= 2) {
                                 multiTouch = true
+
                                 val first = pressed[0]
                                 val second = pressed[1]
 
-                                val oldDx = first.previousPosition.x - second.previousPosition.x
-                                val oldDy = first.previousPosition.y - second.previousPosition.y
-                                val newDx = first.position.x - second.position.x
-                                val newDy = first.position.y - second.position.y
+                                val oldDx =
+                                    first.previousPosition.x - second.previousPosition.x
+                                val oldDy =
+                                    first.previousPosition.y - second.previousPosition.y
+                                val newDx =
+                                    first.position.x - second.position.x
+                                val newDy =
+                                    first.position.y - second.position.y
 
-                                val oldDistance = sqrt(oldDx * oldDx + oldDy * oldDy)
-                                val newDistance = sqrt(newDx * newDx + newDy * newDy)
+                                val oldDistance = sqrt(
+                                    oldDx * oldDx + oldDy * oldDy
+                                )
+                                val newDistance = sqrt(
+                                    newDx * newDx + newDy * newDy
+                                )
 
                                 if (oldDistance > 0f) {
                                     scale = (scale * newDistance / oldDistance)
@@ -389,8 +608,11 @@ fun FullScreenPhoto(
 
                             } else if (pressed.size == 1) {
                                 val change = pressed.first()
-                                val dx = change.position.x - change.previousPosition.x
-                                val dy = change.position.y - change.previousPosition.y
+
+                                val dx =
+                                    change.position.x - change.previousPosition.x
+                                val dy =
+                                    change.position.y - change.previousPosition.y
 
                                 if (scale > 1.01f) {
                                     offsetX += dx
@@ -400,18 +622,24 @@ fun FullScreenPhoto(
                                 }
                             }
 
-                            // Keep the zoomed photo within its actual image bounds.
                             val image = bitmap
+
                             if (image != null && scale > 1f) {
                                 val fit = minOf(
                                     size.width.toFloat() / image.width,
                                     size.height.toFloat() / image.height
                                 )
+
                                 val imageWidth = image.width * fit * scale
                                 val imageHeight = image.height * fit * scale
 
-                                val maxX = ((imageWidth - size.width) / 2f).coerceAtLeast(0f)
-                                val maxY = ((imageHeight - size.height) / 2f).coerceAtLeast(0f)
+                                val maxX = (
+                                    (imageWidth - size.width) / 2f
+                                ).coerceAtLeast(0f)
+
+                                val maxY = (
+                                    (imageHeight - size.height) / 2f
+                                ).coerceAtLeast(0f)
 
                                 offsetX = offsetX.coerceIn(-maxX, maxX)
                                 offsetY = offsetY.coerceIn(-maxY, maxY)
@@ -428,16 +656,21 @@ fun FullScreenPhoto(
                             !animating && bitmap != null
                         ) {
                             val threshold = size.width * 0.18f
+
                             val target = when {
-                                swipeX < -threshold && currentIndex < photos.lastIndex ->
+                                swipeX < -threshold &&
+                                    currentIndex < photos.lastIndex ->
                                     currentIndex + 1
+
                                 swipeX > threshold && currentIndex > 0 ->
                                     currentIndex - 1
+
                                 else -> currentIndex
                             }
 
                             if (target != currentIndex) {
-                                val direction = if (target > currentIndex) 1f else -1f
+                                val direction =
+                                    if (target > currentIndex) 1f else -1f
                                 val width = size.width.toFloat()
 
                                 scope.launch {
@@ -460,6 +693,7 @@ fun FullScreenPhoto(
                                         offsetY = 0f
 
                                         slide.snapTo(direction * width)
+
                                         slide.animateTo(
                                             0f,
                                             animationSpec = tween(280)
@@ -496,7 +730,10 @@ fun FullScreenPhoto(
                 }
 
                 else -> {
-                    Text("Unable to load photo", color = Color.White)
+                    Text(
+                        "Unable to load photo",
+                        color = Color.White
+                    )
                 }
             }
         }
