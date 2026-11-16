@@ -18,8 +18,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -32,6 +33,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.awaitPointerEvent
+import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -40,7 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
+import kotlin.math.sqrt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -418,18 +421,99 @@ fun FullScreenPhoto(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .pointerInput(currentIndex, scale) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        val newScale = (scale * zoom).coerceIn(1f, 5f)
+                .pointerInput(currentIndex) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
 
-                        if (scale <= 1.05f && zoom == 1f &&
-                            abs(pan.x) > abs(pan.y)
-                        ) {
-                            offsetX += pan.x
-                        } else {
-                            scale = newScale
-                            offsetX += pan.x
-                            offsetY += pan.y
+                        var swipeX = 0f
+                        var multiTouch = false
+
+                        do {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.filter {
+                                it.pressed
+                            }
+
+                            if (pressed.size >= 2) {
+                                multiTouch = true
+
+                                val first = pressed[0]
+                                val second = pressed[1]
+
+                                val oldDx =
+                                    first.previousPosition.x -
+                                        second.previousPosition.x
+                                val oldDy =
+                                    first.previousPosition.y -
+                                        second.previousPosition.y
+
+                                val newDx =
+                                    first.position.x - second.position.x
+                                val newDy =
+                                    first.position.y - second.position.y
+
+                                val oldDistance =
+                                    sqrt(oldDx * oldDx + oldDy * oldDy)
+
+                                val newDistance =
+                                    sqrt(newDx * newDx + newDy * newDy)
+
+                                if (oldDistance > 0f) {
+                                    val zoom = newDistance / oldDistance
+                                    scale = (scale * zoom).coerceIn(1f, 5f)
+                                }
+
+                                if (scale > 1.01f) {
+                                    val panX =
+                                        ((first.position.x -
+                                            first.previousPosition.x) +
+                                            (second.position.x -
+                                                second.previousPosition.x)) / 2f
+
+                                    val panY =
+                                        ((first.position.y -
+                                            first.previousPosition.y) +
+                                            (second.position.y -
+                                                second.previousPosition.y)) / 2f
+
+                                    offsetX += panX
+                                    offsetY += panY
+                                }
+
+                                event.changes.forEach {
+                                    it.consume()
+                                }
+                            } else if (pressed.size == 1) {
+                                val change = pressed.first()
+
+                                if (scale > 1.01f) {
+                                    offsetX += change.position.x -
+                                        change.previousPosition.x
+                                    offsetY += change.position.y -
+                                        change.previousPosition.y
+                                } else if (!multiTouch) {
+                                    swipeX += change.position.x -
+                                        change.previousPosition.x
+                                }
+
+                                change.consume()
+                            }
+
+                        } while (pressed.isNotEmpty())
+
+                        if (!multiTouch && scale <= 1.01f) {
+                            val threshold = size.width * 0.18f
+
+                            if (swipeX < -threshold &&
+                                currentIndex < photos.lastIndex
+                            ) {
+                                currentIndex++
+                            } else if (
+                                swipeX > threshold &&
+                                currentIndex > 0
+                            ) {
+                                currentIndex--
+                            }
                         }
                     }
                 },
@@ -465,30 +549,6 @@ fun FullScreenPhoto(
                     )
                 }
             }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                "Previous",
-                color = if (currentIndex > 0) Color.White else Color.Gray,
-                modifier = Modifier.clickable {
-                    if (currentIndex > 0) currentIndex--
-                }
-            )
-
-            Text(
-                "Next",
-                color = if (currentIndex < photos.lastIndex)
-                    Color.White else Color.Gray,
-                modifier = Modifier.clickable {
-                    if (currentIndex < photos.lastIndex) currentIndex++
-                }
-            )
         }
     }
 }
