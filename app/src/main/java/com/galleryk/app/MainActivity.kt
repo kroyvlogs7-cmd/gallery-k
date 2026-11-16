@@ -12,15 +12,15 @@ import android.os.Bundle
 import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -29,12 +29,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.awaitPointerEvent
-import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -73,13 +72,15 @@ fun GalleryKApp() {
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { permissionGranted = it }
+    ) { granted ->
+        permissionGranted = granted
+    }
 
     LaunchedEffect(Unit) {
-        permissionGranted =
-            ContextCompat.checkSelfPermission(
-                context, permission
-            ) == PackageManager.PERMISSION_GRANTED
+        permissionGranted = ContextCompat.checkSelfPermission(
+            context,
+            permission
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     LaunchedEffect(permissionGranted) {
@@ -105,20 +106,21 @@ fun GalleryKApp() {
                     null,
                     sortOrder
                 )?.use { cursor ->
-                    val idColumn =
-                        cursor.getColumnIndexOrThrow(
-                            MediaStore.Images.Media._ID
-                        )
+                    val idColumn = cursor.getColumnIndexOrThrow(
+                        MediaStore.Images.Media._ID
+                    )
 
                     while (cursor.moveToNext()) {
                         val id = cursor.getLong(idColumn)
                         result.add(
                             ContentUris.withAppendedId(
-                                collection, id
+                                collection,
+                                id
                             )
                         )
                     }
                 }
+
                 result
             }
 
@@ -139,12 +141,13 @@ fun GalleryKApp() {
                 FullScreenPhoto(
                     photos = photos,
                     initialIndex = selectedIndex,
-                    onBack = { selectedIndex = -1 }
+                    onBack = {
+                        selectedIndex = -1
+                    }
                 )
             } else {
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                Column(Modifier.fillMaxSize()) {
+
                     Column(
                         modifier = Modifier.padding(
                             horizontal = 20.dp,
@@ -231,7 +234,9 @@ fun GalleryKApp() {
                             ) {
                                 itemsIndexed(
                                     photos,
-                                    key = { _, uri -> uri.toString() }
+                                    key = { _, uri ->
+                                        uri.toString()
+                                    }
                                 ) { index, photo ->
                                     PhotoThumbnail(
                                         uri = photo,
@@ -284,7 +289,9 @@ fun PhotoThumbnail(
             .aspectRatio(1f)
             .padding(2.dp)
             .background(Color(0xFF292B30))
-            .clickable { onClick() },
+            .clickable {
+                onClick()
+            },
         contentAlignment = Alignment.Center
     ) {
         if (bitmap != null) {
@@ -322,16 +329,20 @@ suspend fun loadFullPhoto(
             return@withContext null
         }
 
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = 1
-            val maxDimension = 4096
+        val maxDimension = 4096
+        val largestSide = maxOf(
+            bounds.outWidth,
+            bounds.outHeight
+        )
 
-            while (
-                bounds.outWidth / (inSampleSize * 2) >= maxDimension ||
-                bounds.outHeight / (inSampleSize * 2) >= maxDimension
-            ) {
-                inSampleSize *= 2
-            }
+        var sampleSize = 1
+
+        while (largestSide / sampleSize > maxDimension) {
+            sampleSize *= 2
+        }
+
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
         }
 
         resolver.openInputStream(uri)?.use {
@@ -377,6 +388,7 @@ fun FullScreenPhoto(
     LaunchedEffect(currentIndex) {
         loading = true
         bitmap = null
+
         scale = 1f
         offsetX = 0f
         offsetY = 0f
@@ -404,7 +416,9 @@ fun FullScreenPhoto(
                 "‹",
                 color = Color.White,
                 fontSize = 34.sp,
-                modifier = Modifier.clickable { onBack() }
+                modifier = Modifier.clickable {
+                    onBack()
+                }
             )
 
             Spacer(Modifier.width(20.dp))
@@ -421,17 +435,25 @@ fun FullScreenPhoto(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .clipToBounds()
                 .pointerInput(currentIndex) {
                     awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
+                        awaitFirstDown(
+                            requireUnconsumed = false
+                        )
 
                         var swipeX = 0f
                         var multiTouch = false
 
-                        do {
+                        while (true) {
                             val event = awaitPointerEvent()
+
                             val pressed = event.changes.filter {
                                 it.pressed
+                            }
+
+                            if (pressed.isEmpty()) {
+                                break
                             }
 
                             if (pressed.size >= 2) {
@@ -443,68 +465,89 @@ fun FullScreenPhoto(
                                 val oldDx =
                                     first.previousPosition.x -
                                         second.previousPosition.x
+
                                 val oldDy =
                                     first.previousPosition.y -
                                         second.previousPosition.y
 
                                 val newDx =
-                                    first.position.x - second.position.x
+                                    first.position.x -
+                                        second.position.x
+
                                 val newDy =
-                                    first.position.y - second.position.y
+                                    first.position.y -
+                                        second.position.y
 
-                                val oldDistance =
-                                    sqrt(oldDx * oldDx + oldDy * oldDy)
+                                val oldDistance = sqrt(
+                                    oldDx * oldDx +
+                                        oldDy * oldDy
+                                )
 
-                                val newDistance =
-                                    sqrt(newDx * newDx + newDy * newDy)
+                                val newDistance = sqrt(
+                                    newDx * newDx +
+                                        newDy * newDy
+                                )
 
                                 if (oldDistance > 0f) {
-                                    val zoom = newDistance / oldDistance
-                                    scale = (scale * zoom).coerceIn(1f, 5f)
+                                    val zoom =
+                                        newDistance / oldDistance
+
+                                    scale = (scale * zoom)
+                                        .coerceIn(1f, 5f)
                                 }
+
+                                val panX = (
+                                    (first.position.x -
+                                        first.previousPosition.x) +
+                                        (second.position.x -
+                                            second.previousPosition.x)
+                                    ) / 2f
+
+                                val panY = (
+                                    (first.position.y -
+                                        first.previousPosition.y) +
+                                        (second.position.y -
+                                            second.previousPosition.y)
+                                    ) / 2f
 
                                 if (scale > 1.01f) {
-                                    val panX =
-                                        ((first.position.x -
-                                            first.previousPosition.x) +
-                                            (second.position.x -
-                                                second.previousPosition.x)) / 2f
-
-                                    val panY =
-                                        ((first.position.y -
-                                            first.previousPosition.y) +
-                                            (second.position.y -
-                                                second.previousPosition.y)) / 2f
-
                                     offsetX += panX
                                     offsetY += panY
+                                } else {
+                                    scale = 1f
+                                    offsetX = 0f
+                                    offsetY = 0f
                                 }
 
-                                event.changes.forEach {
-                                    it.consume()
-                                }
                             } else if (pressed.size == 1) {
                                 val change = pressed.first()
 
-                                if (scale > 1.01f) {
-                                    offsetX += change.position.x -
+                                val dx =
+                                    change.position.x -
                                         change.previousPosition.x
-                                    offsetY += change.position.y -
-                                        change.previousPosition.y
-                                } else if (!multiTouch) {
-                                    swipeX += change.position.x -
-                                        change.previousPosition.x
-                                }
 
-                                change.consume()
+                                val dy =
+                                    change.position.y -
+                                        change.previousPosition.y
+
+                                if (scale > 1.01f) {
+                                    offsetX += dx
+                                    offsetY += dy
+                                } else if (!multiTouch) {
+                                    swipeX += dx
+                                }
                             }
 
-                        } while (pressed.isNotEmpty())
+                            event.changes.forEach {
+                                it.consume()
+                            }
+                        }
 
                         if (!multiTouch && scale <= 1.01f) {
                             val threshold = size.width * 0.18f
 
-                            if (swipeX < -threshold &&
+                            if (
+                                swipeX < -threshold &&
                                 currentIndex < photos.lastIndex
                             ) {
                                 currentIndex++
