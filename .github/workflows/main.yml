@@ -21,17 +21,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Validate AndroidManifest XML
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxml2-utils
+          xmllint --noout app/src/main/AndroidManifest.xml
+
       - name: Download Gradle
         run: |
           wget https://services.gradle.org/distributions/gradle-8.9-bin.zip
           unzip -q gradle-8.9-bin.zip
 
       - name: Clean and Build APK
-        run: ./gradle-8.9/bin/gradle clean assembleDebug --stacktrace
+        run: ./gradle-8.9/bin/gradle clean assembleDebug --stacktrace --info
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Gallery-K-APK
           path: app/build/outputs/apk/debug/app-debug.apk
-
