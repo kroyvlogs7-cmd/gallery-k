@@ -2,46 +2,38 @@
 package com.galleryk.app
 
 import android.Manifest
-import android.app.WallpaperManager
+import android.app.Activity
 import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -49,224 +41,249 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
+
+data class GalleryMedia(
+    val uri: Uri,
+    val isVideo: Boolean,
+    val duration: Long,
+    val albumId: String,
+    val albumName: String,
+    val dateAdded: Long
+)
 
 data class PhotoAlbum(
     val id: String,
     val name: String,
-    val photos: List<Uri>
+    val media: List<GalleryMedia>
 )
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            GalleryKApp()
-        }
+        setContent { GalleryKApp() }
     }
 }
 
-suspend fun loadGallery(
+private fun requiredPermissions(): Array<String> {
+    return when {
+        Build.VERSION.SDK_INT >= 34 -> arrayOf(
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VIDEO,
+            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        )
+        Build.VERSION.SDK_INT >= 33 -> arrayOf(
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VIDEO
+        )
+        else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
+}
+
+private fun hasMediaPermission(context: android.content.Context): Boolean {
+    return requiredPermissions().any {
+        ContextCompat.checkSelfPermission(context, it) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+}
+
+private suspend fun loadGallery(
     context: android.content.Context
-): Pair<List<Uri>, List<PhotoAlbum>> =
+): Pair<List<GalleryMedia>, List<PhotoAlbum>> =
     withContext(Dispatchers.IO) {
 
-        val photos = mutableListOf<Uri>()
-        val albumMap = linkedMapOf<String, MutableList<Uri>>()
-        val names = mutableMapOf<String, String>()
+        val allMedia = mutableListOf<GalleryMedia>()
 
-        val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        fun readCollection(
+            collection: Uri,
+            isVideo: Boolean
+        ) {
+            val idColumnName = MediaStore.MediaColumns._ID
+            val bucketIdName = MediaStore.Images.ImageColumns.BUCKET_ID
+            val bucketNameName = MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME
+            val dateName = MediaStore.MediaColumns.DATE_ADDED
 
-        val projection = arrayOf(
-            MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.BUCKET_ID,
-            MediaStore.Images.Media.BUCKET_DISPLAY_NAME
-        )
-
-        context.contentResolver.query(
-            collection,
-            projection,
-            null,
-            null,
-            "${MediaStore.Images.Media.DATE_ADDED} DESC"
-        )?.use { cursor ->
-
-            val idCol = cursor.getColumnIndexOrThrow(
-                MediaStore.Images.Media._ID
-            )
-            val bucketCol = cursor.getColumnIndexOrThrow(
-                MediaStore.Images.Media.BUCKET_ID
-            )
-            val nameCol = cursor.getColumnIndexOrThrow(
-                MediaStore.Images.Media.BUCKET_DISPLAY_NAME
-            )
-
-            while (cursor.moveToNext()) {
-                val uri = ContentUris.withAppendedId(
-                    collection,
-                    cursor.getLong(idCol)
+            val projection = if (isVideo) {
+                arrayOf(
+                    idColumnName,
+                    bucketIdName,
+                    bucketNameName,
+                    dateName,
+                    MediaStore.Video.VideoColumns.DURATION
                 )
+            } else {
+                arrayOf(
+                    idColumnName,
+                    bucketIdName,
+                    bucketNameName,
+                    dateName
+                )
+            }
 
-                val id = cursor.getString(bucketCol) ?: "other"
-                val name = cursor.getString(nameCol) ?: "Other"
+            context.contentResolver.query(
+                collection,
+                projection,
+                null,
+                null,
+                "$dateName DESC"
+            )?.use { cursor ->
 
-                photos.add(uri)
-                albumMap.getOrPut(id) { mutableListOf() }.add(uri)
-                names[id] = name
+                val idIndex = cursor.getColumnIndexOrThrow(idColumnName)
+                val bucketIdIndex = cursor.getColumnIndexOrThrow(bucketIdName)
+                val bucketNameIndex = cursor.getColumnIndexOrThrow(bucketNameName)
+                val dateIndex = cursor.getColumnIndexOrThrow(dateName)
+                val durationIndex = if (isVideo) {
+                    cursor.getColumnIndexOrThrow(MediaStore.Video.VideoColumns.DURATION)
+                } else -1
+
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idIndex)
+                    val uri = ContentUris.withAppendedId(collection, id)
+                    val bucketId = cursor.getString(bucketIdIndex) ?: "unknown"
+                    val bucketName = cursor.getString(bucketNameIndex) ?: "Other"
+                    val dateAdded = cursor.getLong(dateIndex)
+                    val duration = if (isVideo) cursor.getLong(durationIndex) else 0L
+
+                    allMedia.add(
+                        GalleryMedia(
+                            uri = uri,
+                            isVideo = isVideo,
+                            duration = duration,
+                            albumId = bucketId,
+                            albumName = bucketName,
+                            dateAdded = dateAdded
+                        )
+                    )
+                }
             }
         }
 
-        val albums = albumMap.map { (id, list) ->
-            PhotoAlbum(id, names[id] ?: "Other", list)
-        }
+        readCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false)
+        readCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true)
 
-        Pair(photos, albums)
+        val sortedMedia = allMedia.sortedByDescending { it.dateAdded }
+
+        val albumList = sortedMedia
+            .groupBy { it.albumId }
+            .map { (id, items) ->
+                PhotoAlbum(
+                    id = id,
+                    name = items.firstOrNull()?.albumName ?: "Other",
+                    media = items
+                )
+            }
+
+        Pair(sortedMedia, albumList)
     }
-
-suspend fun loadBitmap(
-    context: android.content.Context,
-    uri: Uri,
-    maxSize: Int = 4096
-): Bitmap? = withContext(Dispatchers.IO) {
-
-    try {
-        val bounds = BitmapFactory.Options().apply {
-            inJustDecodeBounds = true
-        }
-
-        context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, bounds)
-        }
-
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-            return@withContext null
-        }
-
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxSize) {
-            sample *= 2
-        }
-
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = sample
-        }
-
-        context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, options)
-        }
-    } catch (_: Exception) {
-        null
-    }
-}
 
 @Composable
 fun GalleryKApp() {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
-    var photos by remember { mutableStateOf(listOf<Uri>()) }
+    var allMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
     var albums by remember { mutableStateOf(listOf<PhotoAlbum>()) }
-    var selectedUris by remember { mutableStateOf(setOf<Uri>()) }
-
     var selectedIndex by remember { mutableIntStateOf(-1) }
-    var albumId by remember { mutableStateOf<String?>(null) }
-    var tab by remember { mutableStateOf("Photos") }
-
-    var selectionMode by remember { mutableStateOf(false) }
+    var selectedAlbumId by remember { mutableStateOf<String?>(null) }
+    var selectedTab by remember { mutableStateOf("Photos") }
     var permissionGranted by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
-    var refresh by remember { mutableIntStateOf(0) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedUris by remember { mutableStateOf(setOf<Uri>()) }
+    var refreshKey by remember { mutableIntStateOf(0) }
 
-    val gridState = rememberLazyGridState()
-
-    val permission = if (Build.VERSION.SDK_INT >= 33) {
-        Manifest.permission.READ_MEDIA_IMAGES
-    } else {
-        Manifest.permission.READ_EXTERNAL_STORAGE
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        permissionGranted = hasMediaPermission(context)
     }
 
-    val permissionLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestPermission()
-        ) {
-            permissionGranted = it
+    val deleteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            Toast.makeText(context, "Selected media deleted", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "Deletion cancelled", Toast.LENGTH_SHORT).show()
         }
-
-    val deleteLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.StartIntentSenderForResult()
-        ) { result ->
-            if (result.resultCode == android.app.Activity.RESULT_OK) {
-                selectedUris = emptySet()
-                selectionMode = false
-                refresh++
-            }
-        }
+        selectedUris = emptySet()
+        selectionMode = false
+        refreshKey++
+    }
 
     LaunchedEffect(Unit) {
-        permissionGranted =
-            ContextCompat.checkSelfPermission(
-                context,
-                permission
-            ) == PackageManager.PERMISSION_GRANTED
+        permissionGranted = hasMediaPermission(context)
     }
 
-    LaunchedEffect(permissionGranted, refresh) {
+    LaunchedEffect(permissionGranted, refreshKey) {
         if (permissionGranted) {
             loading = true
-            val result = loadGallery(context)
-            photos = result.first
-            albums = result.second
+            try {
+                val result = loadGallery(context)
+                allMedia = result.first
+                albums = result.second
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    "Could not load media: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
             loading = false
         }
     }
 
-    val currentAlbum = albums.find { it.id == albumId }
-    val displayedPhotos = currentAlbum?.photos ?: photos
+    val currentAlbum = albums.find { it.id == selectedAlbumId }
 
-    fun deletePhotos(targets: List<Uri>) {
-        if (targets.isEmpty()) return
+    val tabMedia = when (selectedTab) {
+        "Videos" -> allMedia.filter { it.isVideo }
+        else -> allMedia.filter { !it.isVideo }
+    }
 
-        try {
-            if (Build.VERSION.SDK_INT >= 30) {
+    val displayedMedia = currentAlbum?.media ?: tabMedia
+
+    fun requestDelete() {
+        if (selectedUris.isEmpty()) return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
                 val request = MediaStore.createDeleteRequest(
                     context.contentResolver,
-                    targets
+                    selectedUris.toList()
                 )
-
                 deleteLauncher.launch(
-                    IntentSenderRequest.Builder(
-                        request.intentSender
-                    ).build()
+                    IntentSenderRequest.Builder(request.intentSender).build()
                 )
-            } else {
-                scope.launch(Dispatchers.IO) {
-                    targets.forEach {
-                        context.contentResolver.delete(it, null, null)
-                    }
-                    withContext(Dispatchers.Main) {
-                        refresh++
-                        selectedUris = emptySet()
-                        selectionMode = false
-                    }
-                }
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    "Could not start delete confirmation",
+                    Toast.LENGTH_LONG
+                ).show()
             }
-        } catch (_: Exception) {
-            android.widget.Toast.makeText(
+        } else {
+            Toast.makeText(
                 context,
-                "Unable to delete photos",
-                android.widget.Toast.LENGTH_SHORT
+                "Delete confirmation requires Android 11 or newer",
+                Toast.LENGTH_LONG
             ).show()
         }
     }
 
+    fun openVideo(media: GalleryMedia) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(media.uri, "video/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            Toast.makeText(context, "No video player found", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     BackHandler(
-        enabled = selectionMode ||
-            selectedIndex >= 0 ||
-            albumId != null ||
-            tab == "Albums"
+        enabled = selectionMode || selectedIndex >= 0 ||
+            selectedAlbumId != null || selectedTab != "Photos"
     ) {
         when {
             selectionMode -> {
@@ -274,8 +291,8 @@ fun GalleryKApp() {
                 selectedUris = emptySet()
             }
             selectedIndex >= 0 -> selectedIndex = -1
-            albumId != null -> albumId = null
-            else -> tab = "Photos"
+            selectedAlbumId != null -> selectedAlbumId = null
+            else -> selectedTab = "Photos"
         }
     }
 
@@ -284,34 +301,36 @@ fun GalleryKApp() {
             modifier = Modifier.fillMaxSize(),
             color = Color(0xFF101114)
         ) {
-            if (selectedIndex >= 0 && selectedIndex < displayedPhotos.size) {
-                FullScreenPhoto(
-                    photos = displayedPhotos,
-                    initialIndex = selectedIndex,
-                    onBack = { selectedIndex = -1 },
-                    onDelete = { uri ->
-                        deletePhotos(listOf(uri))
+            if (selectedIndex >= 0 && selectedIndex < displayedMedia.size) {
+                val current = displayedMedia[selectedIndex]
+                if (current.isVideo) {
+                    LaunchedEffect(current.uri) {
+                        openVideo(current)
                         selectedIndex = -1
                     }
-                )
+                } else {
+                    PhotoViewer(
+                        uri = current.uri,
+                        index = selectedIndex,
+                        total = displayedMedia.size,
+                        onBack = { selectedIndex = -1 }
+                    )
+                }
             } else {
                 Column(Modifier.fillMaxSize()) {
                     Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
+                        Modifier.fillMaxWidth().padding(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                if (selectionMode) "${selectedUris.size} Selected"
-                                else "Gallery K",
+                                if (selectionMode) "${selectedUris.size} Selected" else "Gallery K",
                                 color = Color.White,
                                 fontSize = 27.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                if (selectionMode) "Select your photos"
+                                if (selectionMode) "Select media to manage"
                                 else "Your memories, beautifully organized",
                                 color = Color.Gray,
                                 fontSize = 12.sp
@@ -319,21 +338,14 @@ fun GalleryKApp() {
                         }
 
                         if (selectionMode) {
-                            TextButton(
-                                onClick = {
-                                    selectedUris =
-                                        if (
-                                            displayedPhotos.isNotEmpty() &&
-                                            selectedUris.containsAll(displayedPhotos)
-                                        ) emptySet()
-                                        else displayedPhotos.toSet()
-                                }
-                            ) {
+                            TextButton(onClick = {
+                                selectedUris = if (
+                                    selectedUris.size == displayedMedia.size
+                                ) emptySet() else displayedMedia.map { it.uri }.toSet()
+                            }) {
                                 Text(
-                                    if (
-                                        displayedPhotos.isNotEmpty() &&
-                                        selectedUris.containsAll(displayedPhotos)
-                                    ) "Deselect All" else "Select All",
+                                    if (selectedUris.size == displayedMedia.size)
+                                        "Deselect All" else "Select All",
                                     color = Color.White
                                 )
                             }
@@ -342,21 +354,16 @@ fun GalleryKApp() {
 
                     if (selectionMode) {
                         Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp),
+                            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Button(
                                 modifier = Modifier.weight(1f),
                                 enabled = selectedUris.isNotEmpty(),
-                                onClick = {
-                                    deletePhotos(selectedUris.toList())
-                                }
+                                onClick = { requestDelete() }
                             ) {
                                 Text("Delete (${selectedUris.size})")
                             }
-
                             OutlinedButton(
                                 modifier = Modifier.weight(1f),
                                 onClick = {
@@ -369,32 +376,30 @@ fun GalleryKApp() {
                         }
                     } else {
                         Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            listOf("Photos", "Albums").forEach {
-                                val active = tab == it
-
+                            listOf("Photos", "Videos", "Albums").forEach { tab ->
+                                val active = selectedTab == tab
                                 Box(
-                                    Modifier
-                                        .weight(1f)
+                                    Modifier.weight(1f)
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(
                                             if (active) Color(0xFF315C91)
                                             else Color(0xFF24262C)
                                         )
                                         .clickable {
-                                            tab = it
-                                            albumId = null
-                                            selectionMode = false
-                                            selectedUris = emptySet()
+                                            selectedTab = tab
+                                            selectedAlbumId = null
                                         }
-                                        .padding(12.dp),
+                                        .padding(vertical = 12.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(it, color = Color.White)
+                                    Text(
+                                        tab,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
                                 }
                             }
                         }
@@ -408,12 +413,10 @@ fun GalleryKApp() {
                                 Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Button(
-                                    onClick = {
-                                        permissionLauncher.launch(permission)
-                                    }
-                                ) {
-                                    Text("Allow Photos")
+                                Button(onClick = {
+                                    permissionLauncher.launch(requiredPermissions())
+                                }) {
+                                    Text("Allow Photos and Videos")
                                 }
                             }
                         }
@@ -427,78 +430,80 @@ fun GalleryKApp() {
                             }
                         }
 
-                        tab == "Albums" && albumId == null -> {
+                        selectedTab == "Albums" && selectedAlbumId == null -> {
                             Text(
                                 "${albums.size} Albums",
-                                color = Color.White,
-                                modifier = Modifier.padding(16.dp)
+                                color = Color.LightGray,
+                                modifier = Modifier.padding(start = 20.dp, bottom = 10.dp)
                             )
 
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(2),
-                                contentPadding = PaddingValues(8.dp)
-                            ) {
-                                itemsIndexed(
-                                    albums,
-                                    key = { _, album -> album.id }
-                                ) { _, album ->
-                                    AlbumCard(album) {
-                                        albumId = album.id
+                            if (albums.isEmpty()) {
+                                Box(
+                                    Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("No albums found", color = Color.White)
+                                }
+                            } else {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(2),
+                                    contentPadding = PaddingValues(8.dp),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    items(albums, key = { it.id }) { album ->
+                                        AlbumCard(album) {
+                                            selectedAlbumId = album.id
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        displayedPhotos.isEmpty() -> {
+                        displayedMedia.isEmpty() -> {
                             Box(
                                 Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("No photos found", color = Color.White)
+                                Text(
+                                    if (selectedTab == "Videos") "No videos found"
+                                    else "No photos found",
+                                    color = Color.White
+                                )
                             }
                         }
 
                         else -> {
                             Text(
-                                "${displayedPhotos.size} Photos",
+                                "${displayedMedia.size} ${if (selectedTab == "Videos") "Videos" else "Photos"}",
                                 color = Color.LightGray,
-                                modifier = Modifier.padding(
-                                    start = 20.dp,
-                                    bottom = 10.dp
-                                )
+                                modifier = Modifier.padding(start = 20.dp, bottom = 10.dp)
                             )
 
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(3),
-                                state = gridState,
                                 contentPadding = PaddingValues(3.dp),
                                 modifier = Modifier.fillMaxSize()
                             ) {
-                                itemsIndexed(
-                                    displayedPhotos,
-                                    key = { _, uri -> uri.toString() }
-                                ) { index, photo ->
-                                    PhotoThumbnail(
-                                        uri = photo,
-                                        selected = photo in selectedUris,
+                                items(displayedMedia, key = { it.uri.toString() }) { media ->
+                                    MediaThumbnail(
+                                        media = media,
+                                        selected = media.uri in selectedUris,
                                         onClick = {
                                             if (selectionMode) {
                                                 selectedUris =
-                                                    if (photo in selectedUris)
-                                                        selectedUris - photo
-                                                    else
-                                                        selectedUris + photo
-
-                                                if (selectedUris.isEmpty()) {
-                                                    selectionMode = false
-                                                }
+                                                    if (media.uri in selectedUris)
+                                                        selectedUris - media.uri
+                                                    else selectedUris + media.uri
+                                                if (selectedUris.isEmpty()) selectionMode = false
+                                            } else if (media.isVideo) {
+                                                openVideo(media)
                                             } else {
-                                                selectedIndex = index
+                                                selectedIndex = displayedMedia.indexOf(media)
                                             }
                                         },
                                         onLongClick = {
                                             selectionMode = true
-                                            selectedUris = selectedUris + photo
+                                            selectedUris = selectedUris + media.uri
                                         }
                                     )
                                 }
@@ -512,59 +517,72 @@ fun GalleryKApp() {
 }
 
 @Composable
-fun AlbumCard(
-    album: PhotoAlbum,
-    onClick: () -> Unit
-) {
+private fun AlbumCard(album: PhotoAlbum, onClick: () -> Unit) {
     Column(
-        Modifier
-            .padding(5.dp)
+        Modifier.padding(5.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(Color(0xFF24262C))
-            .clickable { onClick() }
+            .clickable(onClick = onClick)
             .padding(8.dp)
     ) {
-        if (album.photos.isNotEmpty()) {
-            PhotoThumbnail(
-                uri = album.photos.first(),
-                onClick = onClick
+        album.media.firstOrNull()?.let { first ->
+            MediaThumbnail(
+                media = first,
+                selected = false,
+                onClick = onClick,
+                onLongClick = onClick
             )
         }
-
         Spacer(Modifier.height(8.dp))
-
         Text(
             album.name,
             color = Color.White,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1
         )
-
         Text(
-            "${album.photos.size} Photos",
+            "${album.media.size} items",
             color = Color.Gray,
             fontSize = 12.sp
         )
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun PhotoThumbnail(
-    uri: Uri,
-    selected: Boolean = false,
+private fun MediaThumbnail(
+    media: GalleryMedia,
+    selected: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit = onClick
+    onLongClick: () -> Unit
 ) {
     val context = LocalContext.current
 
-    val bitmap by produceState<Bitmap?>(null, uri) {
-        value = loadBitmap(context, uri, 500)
+    val bitmap by produceState<Bitmap?>(
+        initialValue = null,
+        key1 = media.uri
+    ) {
+        value = withContext(Dispatchers.IO) {
+            try {
+                if (Build.VERSION.SDK_INT >= 29) {
+                    context.contentResolver.loadThumbnail(
+                        media.uri,
+                        android.util.Size(400, 400),
+                        null
+                    )
+                } else {
+                    context.contentResolver.openInputStream(media.uri)?.use {
+                        android.graphics.BitmapFactory.decodeStream(it)
+                    }
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 
     Box(
-        Modifier
-            .aspectRatio(1f)
+        Modifier.aspectRatio(1f)
             .padding(2.dp)
             .background(Color(0xFF292B30))
             .combinedClickable(
@@ -573,463 +591,127 @@ fun PhotoThumbnail(
             ),
         contentAlignment = Alignment.Center
     ) {
-        bitmap?.let {
+        if (bitmap != null) {
             Image(
-                bitmap = it.asImageBitmap(),
-                contentDescription = "Photo",
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = if (media.isVideo) "Video thumbnail" else "Photo thumbnail",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
-        } ?: CircularProgressIndicator(
-            modifier = Modifier.size(18.dp),
-            strokeWidth = 2.dp
-        )
+        } else {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp
+            )
+        }
+
+        if (media.isVideo) {
+            Box(
+                Modifier.align(Alignment.Center)
+                    .background(Color(0x99000000), RoundedCornerShape(50))
+                    .padding(horizontal = 9.dp, vertical = 5.dp)
+            ) {
+                Text("▶", color = Color.White, fontSize = 16.sp)
+            }
+
+            Text(
+                formatDuration(media.duration),
+                color = Color.White,
+                fontSize = 10.sp,
+                modifier = Modifier.align(Alignment.BottomEnd)
+                    .padding(5.dp)
+                    .background(Color(0xAA000000), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            )
+        }
 
         if (selected) {
             Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color(0x66000000)),
+                Modifier.fillMaxSize().background(Color(0x66000000)),
                 contentAlignment = Alignment.TopEnd
             ) {
                 Text(
                     "✓",
                     color = Color.White,
                     fontSize = 22.sp,
-                    modifier = Modifier
-                        .padding(6.dp)
-                        .background(
-                            Color(0xFF2878D0),
-                            RoundedCornerShape(50)
-                        )
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(6.dp)
+                        .background(Color(0xFF2878D0), RoundedCornerShape(50))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
                 )
             }
         }
     }
 }
 
+private fun formatDuration(durationMs: Long): String {
+    val totalSeconds = durationMs / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+
+    return if (hours > 0) {
+        String.format("%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%d:%02d", minutes, seconds)
+    }
+}
+
 @Composable
-fun FullScreenPhoto(
-    photos: List<Uri>,
-    initialIndex: Int,
-    onBack: () -> Unit,
-    onDelete: (Uri) -> Unit
+private fun PhotoViewer(
+    uri: Uri,
+    index: Int,
+    total: Int,
+    onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    var bitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
 
-    var index by remember { mutableIntStateOf(initialIndex) }
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var loading by remember { mutableStateOf(true) }
-
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
-
-    var menuExpanded by remember { mutableStateOf(false) }
-    var detailsOpen by remember { mutableStateOf(false) }
-    var wallpaperDialog by remember { mutableStateOf(false) }
-    var deleteDialog by remember { mutableStateOf(false) }
-
-    LaunchedEffect(index) {
-        loading = true
-        scale = 1f
-        offsetX = 0f
-        offsetY = 0f
-        bitmap = loadBitmap(context, photos[index])
-        loading = false
-    }
-
-    fun sharePhoto() {
-        try {
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "image/*"
-                putExtra(Intent.EXTRA_STREAM, photos[index])
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-
-            context.startActivity(
-                Intent.createChooser(intent, "Share Photo")
-            )
-        } catch (_: Exception) {
-            android.widget.Toast.makeText(
-                context,
-                "Unable to share photo",
-                android.widget.Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-
-    fun setWallpaper(which: Int) {
-        scope.launch {
+    LaunchedEffect(uri) {
+        bitmap = withContext(Dispatchers.IO) {
             try {
-                val manager = WallpaperManager.getInstance(context)
-                val stream = context.contentResolver.openInputStream(
-                    photos[index]
-                ) ?: throw IllegalStateException("Cannot open photo")
-
-                stream.use {
-                    if (Build.VERSION.SDK_INT >= 24) {
-                        manager.setStream(it, null, true, which)
-                    } else {
-                        manager.setStream(it)
-                    }
+                context.contentResolver.openInputStream(uri)?.use {
+                    android.graphics.BitmapFactory.decodeStream(it)
                 }
-
-                android.widget.Toast.makeText(
-                    context,
-                    "Wallpaper set successfully",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
             } catch (_: Exception) {
-                android.widget.Toast.makeText(
-                    context,
-                    "Unable to set wallpaper",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
+                null
             }
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
+    Column(Modifier.fillMaxSize().background(Color.Black)) {
         Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 "‹",
                 color = Color.White,
                 fontSize = 34.sp,
-                modifier = Modifier.clickable { onBack() }
+                modifier = Modifier.clickable(onClick = onBack)
             )
-
             Spacer(Modifier.width(20.dp))
-
             Text(
-                "Photo ${index + 1} / ${photos.size}",
+                "Photo ${index + 1} / $total",
                 color = Color.White,
-                modifier = Modifier.weight(1f)
+                fontSize = 17.sp
             )
-
-            Box {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .clickable {
-                            menuExpanded = true
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "⋮",
-                        color = Color.White,
-                        fontSize = 30.sp
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = {
-                        menuExpanded = false
-                    }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Share") },
-                        onClick = {
-                            menuExpanded = false
-                            sharePhoto()
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = { Text("Photo Details") },
-                        onClick = {
-                            menuExpanded = false
-                            detailsOpen = true
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = { Text("Delete Photo") },
-                        onClick = {
-                            menuExpanded = false
-                            deleteDialog = true
-                        }
-                    )
-
-                    DropdownMenuItem(
-                        text = { Text("Set as Wallpaper") },
-                        onClick = {
-                            menuExpanded = false
-                            wallpaperDialog = true
-                        }
-                    )
-                }
-            }
         }
 
         Box(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .clipToBounds()
-                .pointerInput(index, bitmap) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(1f, 5f)
-
-                        if (scale > 1f) {
-                            offsetX += pan.x
-                            offsetY += pan.y
-                        } else {
-                            offsetX = 0f
-                            offsetY = 0f
-                        }
-
-                        val maxOffsetX = size.width * (scale - 1f) / 2f
-                        val maxOffsetY = size.height * (scale - 1f) / 2f
-
-                        offsetX = offsetX.coerceIn(-maxOffsetX, maxOffsetX)
-                        offsetY = offsetY.coerceIn(-maxOffsetY, maxOffsetY)
-                    }
-                }
-                .pointerInput(index) {
-                    detectTapGestures(
-                        onDoubleTap = {
-                            if (scale > 1f) {
-                                scale = 1f
-                                offsetX = 0f
-                                offsetY = 0f
-                            } else {
-                                scale = 2.5f
-                            }
-                        }
-                    )
-                }
-                .pointerInput(index, scale) {
-                    var swipe = 0f
-
-                    detectDragGestures(
-                        onDragStart = {
-                            swipe = 0f
-                        },
-                        onDrag = { change, amount ->
-                            if (scale <= 1.01f) {
-                                swipe += amount.x
-                                change.consume()
-                            }
-                        },
-                        onDragEnd = {
-                            if (abs(swipe) > size.width * 0.2f) {
-                                if (swipe < 0 && index < photos.lastIndex) {
-                                    index++
-                                } else if (swipe > 0 && index > 0) {
-                                    index--
-                                }
-                            }
-                            swipe = 0f
-                        },
-                        onDragCancel = {
-                            swipe = 0f
-                        }
-                    )
-                },
+            Modifier.weight(1f).fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
-            when {
-                loading -> {
-                    CircularProgressIndicator(color = Color.White)
-                }
-
-                bitmap != null -> {
-                    Image(
-                        bitmap = bitmap!!.asImageBitmap(),
-                        contentDescription = "Full Screen Photo",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                                translationX = offsetX
-                                translationY = offsetY
-                            }
-                    )
-                }
-
-                else -> {
-                    Text(
-                        "Unable to load photo",
-                        color = Color.White
-                    )
-                }
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap!!.asImageBitmap(),
+                    contentDescription = "Full photo",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit
+                )
+            } else {
+                CircularProgressIndicator(color = Color.White)
             }
         }
-
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "‹ Previous",
-                color = if (index > 0) Color.White else Color.Gray,
-                modifier = Modifier.clickable {
-                    if (index > 0) index--
-                }
-            )
-
-            Text(
-                "Next ›",
-                color = if (index < photos.lastIndex) Color.White else Color.Gray,
-                modifier = Modifier.clickable {
-                    if (index < photos.lastIndex) index++
-                }
-            )
-        }
-    }
-
-    if (detailsOpen) {
-        val uri = photos[index]
-
-        var name = "Unknown"
-        var size = "Unknown"
-        var date = "Unknown"
-        var resolution = "Unknown"
-
-        try {
-            context.contentResolver.query(
-                uri,
-                arrayOf(
-                    MediaStore.Images.Media.DISPLAY_NAME,
-                    MediaStore.Images.Media.SIZE,
-                    MediaStore.Images.Media.DATE_ADDED,
-                    MediaStore.Images.Media.WIDTH,
-                    MediaStore.Images.Media.HEIGHT
-                ),
-                null,
-                null,
-                null
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    name = cursor.getString(0) ?: "Unknown"
-                    size = "${cursor.getLong(1) / 1024} KB"
-
-                    date = java.text.SimpleDateFormat(
-                        "dd MMM yyyy HH:mm",
-                        java.util.Locale.getDefault()
-                    ).format(
-                        java.util.Date(cursor.getLong(2) * 1000)
-                    )
-
-                    resolution =
-                        "${cursor.getInt(3)} × ${cursor.getInt(4)}"
-                }
-            }
-        } catch (_: Exception) {
-        }
-
-        AlertDialog(
-            onDismissRequest = { detailsOpen = false },
-            title = { Text("Photo Details") },
-            text = {
-                Column {
-                    Text("Name: $name")
-                    Text("Size: $size")
-                    Text("Date: $date")
-                    Text("Resolution: $resolution")
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { detailsOpen = false }) {
-                    Text("OK")
-                }
-            }
-        )
-    }
-
-    if (deleteDialog) {
-        AlertDialog(
-            onDismissRequest = { deleteDialog = false },
-            title = { Text("Delete Photo?") },
-            text = {
-                Text("Are you sure you want to delete this photo?")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        deleteDialog = false
-                        onDelete(photos[index])
-                    }
-                ) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteDialog = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    if (wallpaperDialog) {
-        AlertDialog(
-            onDismissRequest = {
-                wallpaperDialog = false
-            },
-            title = { Text("Set as Wallpaper") },
-            text = {
-                Column {
-                    TextButton(
-                        onClick = {
-                            wallpaperDialog = false
-                            setWallpaper(WallpaperManager.FLAG_SYSTEM)
-                        }
-                    ) {
-                        Text("Home Screen")
-                    }
-
-                    TextButton(
-                        onClick = {
-                            wallpaperDialog = false
-                            setWallpaper(WallpaperManager.FLAG_LOCK)
-                        }
-                    ) {
-                        Text("Lock Screen")
-                    }
-
-                    TextButton(
-                        onClick = {
-                            wallpaperDialog = false
-                            setWallpaper(
-                                WallpaperManager.FLAG_SYSTEM or
-                                    WallpaperManager.FLAG_LOCK
-                            )
-                        }
-                    ) {
-                        Text("Both")
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        wallpaperDialog = false
-                    }
-                ) {
-                    Text("Close")
-                }
-            }
-        )
     }
 }
