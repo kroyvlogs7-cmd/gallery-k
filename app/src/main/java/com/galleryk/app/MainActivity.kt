@@ -2,7 +2,9 @@
 package com.galleryk.app
 
 import android.Manifest
+import android.app.WallpaperManager
 import android.content.ContentUris
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -16,19 +18,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -51,7 +51,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.sqrt
+import kotlin.math.abs
 
 data class PhotoAlbum(
     val id: String,
@@ -62,9 +62,7 @@ data class PhotoAlbum(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            GalleryKApp()
-        }
+        setContent { GalleryKApp() }
     }
 }
 
@@ -72,11 +70,9 @@ suspend fun loadGallery(
     context: android.content.Context
 ): Pair<List<Uri>, List<PhotoAlbum>> =
     withContext(Dispatchers.IO) {
-
-        val allPhotos = mutableListOf<Uri>()
+        val photos = mutableListOf<Uri>()
         val albumMap = linkedMapOf<String, MutableList<Uri>>()
-        val albumNames = mutableMapOf<String, String>()
-
+        val names = mutableMapOf<String, String>()
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
 
         val projection = arrayOf(
@@ -85,82 +81,98 @@ suspend fun loadGallery(
             MediaStore.Images.Media.BUCKET_DISPLAY_NAME
         )
 
-        val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
-
         context.contentResolver.query(
             collection,
             projection,
             null,
             null,
-            sortOrder
+            "${MediaStore.Images.Media.DATE_ADDED} DESC"
         )?.use { cursor ->
-
-            val idColumn = cursor.getColumnIndexOrThrow(
+            val idCol = cursor.getColumnIndexOrThrow(
                 MediaStore.Images.Media._ID
             )
-
-            val bucketIdColumn = cursor.getColumnIndexOrThrow(
+            val bucketCol = cursor.getColumnIndexOrThrow(
                 MediaStore.Images.Media.BUCKET_ID
             )
-
-            val bucketNameColumn = cursor.getColumnIndexOrThrow(
+            val nameCol = cursor.getColumnIndexOrThrow(
                 MediaStore.Images.Media.BUCKET_DISPLAY_NAME
             )
 
             while (cursor.moveToNext()) {
-                val id = cursor.getLong(idColumn)
-
                 val uri = ContentUris.withAppendedId(
                     collection,
-                    id
+                    cursor.getLong(idCol)
                 )
+                val id = cursor.getString(bucketCol) ?: "other"
+                val name = cursor.getString(nameCol) ?: "Other"
 
-                val bucketId =
-                    cursor.getString(bucketIdColumn) ?: "unknown"
-
-                val bucketName =
-                    cursor.getString(bucketNameColumn) ?: "Other"
-
-                allPhotos.add(uri)
-
-                albumMap.getOrPut(bucketId) {
-                    mutableListOf()
-                }.add(uri)
-
-                albumNames[bucketId] = bucketName
+                photos.add(uri)
+                albumMap.getOrPut(id) { mutableListOf() }.add(uri)
+                names[id] = name
             }
         }
 
-        val albumList = albumMap.map { (id, albumPhotos) ->
-            PhotoAlbum(
-                id = id,
-                name = albumNames[id] ?: "Other",
-                photos = albumPhotos
-            )
+        val albums = albumMap.map { (id, list) ->
+            PhotoAlbum(id, names[id] ?: "Other", list)
         }
 
-        Pair(allPhotos, albumList)
+        Pair(photos, albums)
     }
+
+suspend fun loadBitmap(
+    context: android.content.Context,
+    uri: Uri,
+    maxSize: Int = 4096
+): Bitmap? = withContext(Dispatchers.IO) {
+    try {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+
+        context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
+        }
+
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return@withContext null
+        }
+
+        var sample = 1
+        while (
+            maxOf(bounds.outWidth, bounds.outHeight) / sample > maxSize
+        ) {
+            sample *= 2
+        }
+
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sample
+        }
+
+        context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, options)
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
 
 @Composable
 fun GalleryKApp() {
-
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var photos by remember { mutableStateOf(listOf<Uri>()) }
     var albums by remember { mutableStateOf(listOf<PhotoAlbum>()) }
-
-    var selectedIndex by remember { mutableIntStateOf(-1) }
-    var selectedAlbumId by remember { mutableStateOf<String?>(null) }
-    var selectedTab by remember { mutableStateOf("Photos") }
-
-    var permissionGranted by remember { mutableStateOf(false) }
-    var loading by remember { mutableStateOf(false) }
-
-    var selectionMode by remember { mutableStateOf(false) }
     var selectedUris by remember { mutableStateOf(setOf<Uri>()) }
 
-    var refreshKey by remember { mutableIntStateOf(0) }
+    var selectedIndex by remember { mutableIntStateOf(-1) }
+    var albumId by remember { mutableStateOf<String?>(null) }
+    var tab by remember { mutableStateOf("Photos") }
+
+    var selectionMode by remember { mutableStateOf(false) }
+    var permissionGranted by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(false) }
+    var refresh by remember { mutableIntStateOf(0) }
 
     val gridState = rememberLazyGridState()
 
@@ -181,73 +193,58 @@ fun GalleryKApp() {
         rememberLauncherForActivityResult(
             ActivityResultContracts.StartIntentSenderForResult()
         ) { result ->
-
             if (result.resultCode == android.app.Activity.RESULT_OK) {
                 selectedUris = emptySet()
                 selectionMode = false
-                refreshKey++
+                refresh++
             }
         }
 
     LaunchedEffect(Unit) {
         permissionGranted =
             ContextCompat.checkSelfPermission(
-                context,
-                permission
+                context, permission
             ) == PackageManager.PERMISSION_GRANTED
     }
 
-    LaunchedEffect(permissionGranted, refreshKey) {
+    LaunchedEffect(permissionGranted, refresh) {
         if (permissionGranted) {
             loading = true
-
             val result = loadGallery(context)
-
             photos = result.first
             albums = result.second
-
             loading = false
         }
     }
 
-    val currentAlbum = albums.find {
-        it.id == selectedAlbumId
-    }
-
+    val currentAlbum = albums.find { it.id == albumId }
     val displayedPhotos = currentAlbum?.photos ?: photos
 
-    fun deleteSelectedPhotos() {
-
-        val targets = selectedUris.toList()
-
+    fun deletePhotos(targets: List<Uri>) {
         if (targets.isEmpty()) return
 
         try {
             if (Build.VERSION.SDK_INT >= 30) {
-
-                val pendingIntent =
-                    MediaStore.createDeleteRequest(
-                        context.contentResolver,
-                        targets
-                    )
+                val request = MediaStore.createDeleteRequest(
+                    context.contentResolver,
+                    targets
+                )
 
                 deleteLauncher.launch(
                     IntentSenderRequest.Builder(
-                        pendingIntent.intentSender
+                        request.intentSender
                     ).build()
                 )
-
             } else {
-
-                targets.forEach { uri ->
-                    context.contentResolver.delete(uri, null, null)
+                scope.launch(Dispatchers.IO) {
+                    targets.forEach {
+                        context.contentResolver.delete(it, null, null)
+                    }
+                    refresh++
+                    selectedUris = emptySet()
+                    selectionMode = false
                 }
-
-                selectedUris = emptySet()
-                selectionMode = false
-                refreshKey++
             }
-
         } catch (e: Exception) {
             android.widget.Toast.makeText(
                 context,
@@ -260,26 +257,17 @@ fun GalleryKApp() {
     BackHandler(
         enabled = selectionMode ||
             selectedIndex >= 0 ||
-            selectedAlbumId != null ||
-            selectedTab == "Albums"
+            albumId != null ||
+            tab == "Albums"
     ) {
         when {
             selectionMode -> {
                 selectionMode = false
                 selectedUris = emptySet()
             }
-
-            selectedIndex >= 0 -> {
-                selectedIndex = -1
-            }
-
-            selectedAlbumId != null -> {
-                selectedAlbumId = null
-            }
-
-            selectedTab == "Albums" -> {
-                selectedTab = "Photos"
-            }
+            selectedIndex >= 0 -> selectedIndex = -1
+            albumId != null -> albumId = null
+            else -> tab = "Photos"
         }
     }
 
@@ -288,80 +276,55 @@ fun GalleryKApp() {
             modifier = Modifier.fillMaxSize(),
             color = Color(0xFF101114)
         ) {
-
-            if (
-                selectedIndex >= 0 &&
+            if (selectedIndex >= 0 &&
                 selectedIndex < displayedPhotos.size
             ) {
-
                 FullScreenPhoto(
                     photos = displayedPhotos,
                     initialIndex = selectedIndex,
-                    onBack = {
+                    onBack = { selectedIndex = -1 },
+                    onRefresh = { refresh++ },
+                    onDelete = { uri ->
+                        deletePhotos(listOf(uri))
                         selectedIndex = -1
                     }
                 )
-
             } else {
-
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                Column(Modifier.fillMaxSize()) {
 
                     Row(
-                        modifier = Modifier
+                        Modifier
                             .fillMaxWidth()
-                            .padding(
-                                horizontal = 20.dp,
-                                vertical = 18.dp
-                            ),
+                            .padding(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-
-                        Column(
-                            modifier = Modifier.weight(1f)
-                        ) {
-
+                        Column(Modifier.weight(1f)) {
                             Text(
-                                if (selectionMode) {
+                                if (selectionMode)
                                     "${selectedUris.size} Selected"
-                                } else {
-                                    "Gallery K"
-                                },
+                                else "Gallery K",
                                 color = Color.White,
                                 fontSize = 27.sp,
                                 fontWeight = FontWeight.Bold
                             )
-
                             Text(
-                                if (selectionMode) {
-                                    "Select your photos"
-                                } else {
-                                    "Your memories, beautifully organized"
-                                },
+                                "Your memories, beautifully organized",
                                 color = Color.Gray,
                                 fontSize = 12.sp
                             )
                         }
 
                         if (selectionMode) {
-                            TextButton(
-                                onClick = {
-                                    if (
-                                        selectedUris.size ==
-                                        displayedPhotos.size
-                                    ) {
-                                        selectedUris = emptySet()
-                                    } else {
-                                        selectedUris =
-                                            displayedPhotos.toSet()
-                                    }
-                                }
-                            ) {
+                            TextButton(onClick = {
+                                selectedUris =
+                                    if (selectedUris.containsAll(displayedPhotos) &&
+                                        displayedPhotos.isNotEmpty()
+                                    ) emptySet()
+                                    else displayedPhotos.toSet()
+                            }) {
                                 Text(
-                                    if (
-                                        selectedUris.size ==
-                                        displayedPhotos.size
+                                    if (displayedPhotos.isNotEmpty() &&
+                                        selectedUris.containsAll(displayedPhotos)
                                     ) "Deselect All" else "Select All",
                                     color = Color.White
                                 )
@@ -370,20 +333,15 @@ fun GalleryKApp() {
                     }
 
                     if (selectionMode) {
-
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp),
-                            horizontalArrangement =
-                                Arrangement.spacedBy(12.dp)
+                            Modifier.padding(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-
                             Button(
                                 modifier = Modifier.weight(1f),
                                 enabled = selectedUris.isNotEmpty(),
                                 onClick = {
-                                    deleteSelectedPhotos()
+                                    deletePhotos(selectedUris.toList())
                                 }
                             ) {
                                 Text("Delete (${selectedUris.size})")
@@ -399,44 +357,30 @@ fun GalleryKApp() {
                                 Text("Cancel")
                             }
                         }
-
                     } else {
-
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp),
-                            horizontalArrangement =
-                                Arrangement.spacedBy(10.dp)
+                            Modifier.padding(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-
-                            listOf("Photos", "Albums").forEach { tab ->
-
-                                val active = selectedTab == tab
+                            listOf("Photos", "Albums").forEach {
+                                val active = tab == it
 
                                 Box(
-                                    modifier = Modifier
+                                    Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(
-                                            if (active) {
-                                                Color(0xFF315C91)
-                                            } else {
-                                                Color(0xFF24262C)
-                                            }
+                                            if (active) Color(0xFF315C91)
+                                            else Color(0xFF24262C)
                                         )
                                         .clickable {
-                                            selectedTab = tab
-                                            selectedAlbumId = null
+                                            tab = it
+                                            albumId = null
                                         }
-                                        .padding(vertical = 12.dp),
+                                        .padding(12.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        tab,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
+                                    Text(it, color = Color.White)
                                 }
                             }
                         }
@@ -445,7 +389,6 @@ fun GalleryKApp() {
                     Spacer(Modifier.height(14.dp))
 
                     when {
-
                         !permissionGranted -> {
                             Box(
                                 Modifier.fillMaxSize(),
@@ -470,41 +413,23 @@ fun GalleryKApp() {
                             }
                         }
 
-                        selectedTab == "Albums" &&
-                            selectedAlbumId == null -> {
-
+                        tab == "Albums" && albumId == null -> {
                             Text(
                                 "${albums.size} Albums",
-                                color = Color.LightGray,
-                                modifier = Modifier.padding(
-                                    start = 20.dp,
-                                    bottom = 10.dp
-                                )
+                                color = Color.White,
+                                modifier = Modifier.padding(16.dp)
                             )
 
-                            if (albums.isEmpty()) {
-                                Box(
-                                    Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        "No albums found",
-                                        color = Color.White
-                                    )
-                                }
-                            } else {
-                                LazyVerticalGrid(
-                                    columns = GridCells.Fixed(2),
-                                    contentPadding = PaddingValues(8.dp),
-                                    modifier = Modifier.fillMaxSize()
-                                ) {
-                                    items(
-                                        albums,
-                                        key = { it.id }
-                                    ) { album ->
-                                        AlbumCard(album) {
-                                            selectedAlbumId = album.id
-                                        }
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(2),
+                                contentPadding = PaddingValues(8.dp)
+                            ) {
+                                itemsIndexed(
+                                    albums,
+                                    key = { _, album -> album.id }
+                                ) { _, album ->
+                                    AlbumCard(album) {
+                                        albumId = album.id
                                     }
                                 }
                             }
@@ -515,15 +440,11 @@ fun GalleryKApp() {
                                 Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    "No photos found",
-                                    color = Color.White
-                                )
+                                Text("No photos found", color = Color.White)
                             }
                         }
 
                         else -> {
-
                             Text(
                                 "${displayedPhotos.size} Photos",
                                 color = Color.LightGray,
@@ -537,9 +458,88 @@ fun GalleryKApp() {
                                 columns = GridCells.Fixed(3),
                                 state = gridState,
                                 contentPadding = PaddingValues(3.dp),
-                                modifier = Modifier.fillMaxSize()
-                            ) {
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .pointerInput(
+                                        displayedPhotos,
+                                        selectionMode
+                                    ) {
+                                        var dragStarted = false
+                                        var lastIndex = -1
 
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                                val visible =
+                                                    gridState.layoutInfo.visibleItemsInfo
+
+                                                val item = visible.firstOrNull {
+                                                    val x = it.offset.x
+                                                    val y = it.offset.y
+                                                    it.size > 0 &&
+                                                        it.index in displayedPhotos.indices
+                                                }
+
+                                                dragStarted = true
+                                            },
+                                            onDrag = { change, amount ->
+                                                if (!dragStarted) return@detectDragGesturesAfterLongPress
+
+                                                val visible =
+                                                    gridState.layoutInfo.visibleItemsInfo
+
+                                                val position = change.position
+
+                                                val hit = visible.firstOrNull {
+                                                    val x = it.offset.x
+                                                    val y = it.offset.y
+
+                                                    position.x >= x &&
+                                                        position.x < x + it.size &&
+                                                        position.y >= y &&
+                                                        position.y < y + it.size
+                                                }
+
+                                                if (hit != null &&
+                                                    hit.index in displayedPhotos.indices
+                                                ) {
+                                                    val uri =
+                                                        displayedPhotos[hit.index]
+
+                                                    if (lastIndex != hit.index) {
+                                                        selectionMode = true
+                                                        selectedUris =
+                                                            selectedUris + uri
+                                                        lastIndex = hit.index
+                                                    }
+                                                }
+
+                                                val edge = 100.dp.toPx()
+
+                                                if (position.y < edge) {
+                                                    scope.launch {
+                                                        gridState.scrollBy(-25f)
+                                                    }
+                                                } else if (
+                                                    position.y > size.height - edge
+                                                ) {
+                                                    scope.launch {
+                                                        gridState.scrollBy(25f)
+                                                    }
+                                                }
+
+                                                change.consume()
+                                            },
+                                            onDragEnd = {
+                                                dragStarted = false
+                                                lastIndex = -1
+                                            },
+                                            onDragCancel = {
+                                                dragStarted = false
+                                                lastIndex = -1
+                                            }
+                                        )
+                                    }
+                            ) {
                                 itemsIndexed(
                                     displayedPhotos,
                                     key = { _, uri -> uri.toString() }
@@ -551,11 +551,10 @@ fun GalleryKApp() {
                                         onClick = {
                                             if (selectionMode) {
                                                 selectedUris =
-                                                    if (photo in selectedUris) {
+                                                    if (photo in selectedUris)
                                                         selectedUris - photo
-                                                    } else {
+                                                    else
                                                         selectedUris + photo
-                                                    }
 
                                                 if (selectedUris.isEmpty()) {
                                                     selectionMode = false
@@ -566,8 +565,7 @@ fun GalleryKApp() {
                                         },
                                         onLongClick = {
                                             selectionMode = true
-                                            selectedUris =
-                                                selectedUris + photo
+                                            selectedUris = selectedUris + photo
                                         }
                                     )
                                 }
@@ -586,14 +584,13 @@ fun AlbumCard(
     onClick: () -> Unit
 ) {
     Column(
-        modifier = Modifier
+        Modifier
             .padding(5.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(Color(0xFF24262C))
             .clickable { onClick() }
             .padding(8.dp)
     ) {
-
         if (album.photos.isNotEmpty()) {
             PhotoThumbnail(
                 uri = album.photos.first(),
@@ -606,8 +603,7 @@ fun AlbumCard(
         Text(
             album.name,
             color = Color.White,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1
+            fontWeight = FontWeight.SemiBold
         )
 
         Text(
@@ -626,31 +622,14 @@ fun PhotoThumbnail(
     onClick: () -> Unit,
     onLongClick: () -> Unit = onClick
 ) {
-
     val context = LocalContext.current
 
     val bitmap by produceState<Bitmap?>(null, uri) {
-        value = withContext(Dispatchers.IO) {
-            try {
-                if (Build.VERSION.SDK_INT >= 29) {
-                    context.contentResolver.loadThumbnail(
-                        uri,
-                        android.util.Size(400, 400),
-                        null
-                    )
-                } else {
-                    context.contentResolver.openInputStream(uri)?.use {
-                        BitmapFactory.decodeStream(it)
-                    }
-                }
-            } catch (e: Exception) {
-                null
-            }
-        }
+        value = loadBitmap(context, uri, 500)
     }
 
     Box(
-        modifier = Modifier
+        Modifier
             .aspectRatio(1f)
             .padding(2.dp)
             .background(Color(0xFF292B30))
@@ -660,24 +639,21 @@ fun PhotoThumbnail(
             ),
         contentAlignment = Alignment.Center
     ) {
-
-        if (bitmap != null) {
+        bitmap?.let {
             Image(
-                bitmap = bitmap!!.asImageBitmap(),
-                contentDescription = "Photo thumbnail",
+                bitmap = it.asImageBitmap(),
+                contentDescription = "Photo",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
-        } else {
-            CircularProgressIndicator(
-                modifier = Modifier.size(18.dp),
-                strokeWidth = 2.dp
-            )
-        }
+        } ?: CircularProgressIndicator(
+            modifier = Modifier.size(18.dp),
+            strokeWidth = 2.dp
+        )
 
         if (selected) {
             Box(
-                modifier = Modifier
+                Modifier
                     .fillMaxSize()
                     .background(Color(0x66000000)),
                 contentAlignment = Alignment.TopEnd
@@ -686,62 +662,16 @@ fun PhotoThumbnail(
                     "✓",
                     color = Color.White,
                     fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
                     modifier = Modifier
                         .padding(6.dp)
                         .background(
                             Color(0xFF2878D0),
                             RoundedCornerShape(50)
                         )
-                        .padding(
-                            horizontal = 7.dp,
-                            vertical = 2.dp
-                        )
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
                 )
             }
         }
-    }
-}
-
-suspend fun loadFullPhoto(
-    context: android.content.Context,
-    uri: Uri
-): Bitmap? = withContext(Dispatchers.IO) {
-
-    try {
-        val resolver = context.contentResolver
-
-        val bounds = BitmapFactory.Options().apply {
-            inJustDecodeBounds = true
-        }
-
-        resolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, bounds)
-        }
-
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-            return@withContext null
-        }
-
-        val maxDimension = 4096
-        val largestSide = maxOf(bounds.outWidth, bounds.outHeight)
-
-        var sampleSize = 1
-
-        while (largestSide / sampleSize > maxDimension) {
-            sampleSize *= 2
-        }
-
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = sampleSize
-        }
-
-        resolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, options)
-        }
-
-    } catch (e: Exception) {
-        null
     }
 }
 
@@ -749,316 +679,407 @@ suspend fun loadFullPhoto(
 fun FullScreenPhoto(
     photos: List<Uri>,
     initialIndex: Int,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+    onDelete: (Uri) -> Unit
 ) {
-
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var currentIndex by remember {
-        mutableIntStateOf(initialIndex)
-    }
+    var index by remember { mutableIntStateOf(initialIndex) }
+    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var loading by remember { mutableStateOf(true) }
 
-    var bitmap by remember {
-        mutableStateOf<Bitmap?>(null)
-    }
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
 
-    var loading by remember {
-        mutableStateOf(true)
-    }
+    var menuExpanded by remember { mutableStateOf(false) }
+    var detailsOpen by remember { mutableStateOf(false) }
+    var wallpaperDialog by remember { mutableStateOf(false) }
+    var deleteDialog by remember { mutableStateOf(false) }
 
-    var scale by remember {
-        mutableFloatStateOf(1f)
-    }
-
-    var offsetX by remember {
-        mutableFloatStateOf(0f)
-    }
-
-    var offsetY by remember {
-        mutableFloatStateOf(0f)
-    }
-
-    var animating by remember {
-        mutableStateOf(false)
-    }
-
-    val slide = remember {
-        Animatable(0f)
-    }
-
-    LaunchedEffect(currentIndex) {
+    LaunchedEffect(index) {
         loading = true
-
-        bitmap = loadFullPhoto(
-            context,
-            photos[currentIndex]
-        )
-
+        scale = 1f
+        offsetX = 0f
+        offsetY = 0f
+        bitmap = loadBitmap(context, photos[index])
         loading = false
     }
 
+    fun sharePhoto() {
+        try {
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/*"
+                putExtra(Intent.EXTRA_STREAM, photos[index])
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(
+                Intent.createChooser(intent, "Share Photo")
+            )
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(
+                context,
+                "Unable to share photo",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    fun setWallpaper(which: Int) {
+        scope.launch {
+            try {
+                val manager = WallpaperManager.getInstance(context)
+
+                if (Build.VERSION.SDK_INT >= 24) {
+                    manager.setStream(
+                        context.contentResolver.openInputStream(photos[index]),
+                        null,
+                        true,
+                        which
+                    )
+                } else {
+                    manager.setStream(
+                        context.contentResolver.openInputStream(photos[index])
+                    )
+                }
+
+                android.widget.Toast.makeText(
+                    context,
+                    "Wallpaper set successfully",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(
+                    context,
+                    "Unable to set wallpaper",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
     Column(
-        modifier = Modifier
+        Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
-
         Row(
-            modifier = Modifier
+            Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-
             Text(
                 "‹",
                 color = Color.White,
                 fontSize = 34.sp,
-                modifier = Modifier.clickable {
-                    onBack()
-                }
+                modifier = Modifier.clickable { onBack() }
             )
 
             Spacer(Modifier.width(20.dp))
 
             Text(
-                "Photo ${currentIndex + 1} / ${photos.size}",
+                "Photo ${index + 1} / ${photos.size}",
                 color = Color.White,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Medium
+                modifier = Modifier.weight(1f)
             )
+
+            Box {
+                Text(
+                    "⋮",
+                    color = Color.White,
+                    fontSize = 30.sp,
+                    modifier = Modifier.clickable {
+                        menuExpanded = true
+                    }
+                )
+
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = {
+                        menuExpanded = false
+                    }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Share") },
+                        onClick = {
+                            menuExpanded = false
+                            sharePhoto()
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = { Text("Photo Details") },
+                        onClick = {
+                            menuExpanded = false
+                            detailsOpen = true
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = { Text("Delete Photo") },
+                        onClick = {
+                            menuExpanded = false
+                            deleteDialog = true
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = { Text("Set as Wallpaper") },
+                        onClick = {
+                            menuExpanded = false
+                            wallpaperDialog = true
+                        }
+                    )
+                }
+            }
         }
 
         Box(
-            modifier = Modifier
+            Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .clipToBounds()
-                .pointerInput(currentIndex, bitmap, animating) {
+                .pointerInput(index, bitmap) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        scale = (scale * zoom).coerceIn(1f, 5f)
 
-                    awaitEachGesture {
-
-                        awaitFirstDown(requireUnconsumed = false)
-
-                        var swipeX = 0f
-                        var multiTouch = false
-
-                        while (true) {
-
-                            val event = awaitPointerEvent()
-
-                            val pressed = event.changes.filter {
-                                it.pressed
-                            }
-
-                            if (pressed.isEmpty()) break
-
-                            if (pressed.size >= 2) {
-
-                                multiTouch = true
-
-                                val first = pressed[0]
-                                val second = pressed[1]
-
-                                val oldDx =
-                                    first.previousPosition.x -
-                                        second.previousPosition.x
-
-                                val oldDy =
-                                    first.previousPosition.y -
-                                        second.previousPosition.y
-
-                                val newDx =
-                                    first.position.x -
-                                        second.position.x
-
-                                val newDy =
-                                    first.position.y -
-                                        second.position.y
-
-                                val oldDistance = sqrt(
-                                    oldDx * oldDx + oldDy * oldDy
-                                )
-
-                                val newDistance = sqrt(
-                                    newDx * newDx + newDy * newDy
-                                )
-
-                                if (oldDistance > 0f) {
-                                    scale = (
-                                        scale * newDistance / oldDistance
-                                    ).coerceIn(1f, 5f)
-                                }
-
-                                offsetX += (
-                                    first.position.x -
-                                        first.previousPosition.x +
-                                        second.position.x -
-                                        second.previousPosition.x
-                                ) / 2f
-
-                                offsetY += (
-                                    first.position.y -
-                                        first.previousPosition.y +
-                                        second.position.y -
-                                        second.previousPosition.y
-                                ) / 2f
-
-                            } else if (pressed.size == 1) {
-
-                                val change = pressed.first()
-
-                                val dx =
-                                    change.position.x -
-                                        change.previousPosition.x
-
-                                val dy =
-                                    change.position.y -
-                                        change.previousPosition.y
-
-                                if (scale > 1.01f) {
-                                    offsetX += dx
-                                    offsetY += dy
-                                } else if (!multiTouch) {
-                                    swipeX += dx
-                                }
-                            }
-
-                            val image = bitmap
-
-                            if (image != null && scale > 1f) {
-
-                                val fit = minOf(
-                                    size.width.toFloat() / image.width,
-                                    size.height.toFloat() / image.height
-                                )
-
-                                val imageWidth =
-                                    image.width * fit * scale
-
-                                val imageHeight =
-                                    image.height * fit * scale
-
-                                val maxX = (
-                                    (imageWidth - size.width) / 2f
-                                ).coerceAtLeast(0f)
-
-                                val maxY = (
-                                    (imageHeight - size.height) / 2f
-                                ).coerceAtLeast(0f)
-
-                                offsetX = offsetX.coerceIn(-maxX, maxX)
-                                offsetY = offsetY.coerceIn(-maxY, maxY)
-
-                            } else {
+                        if (scale > 1f) {
+                            offsetX += pan.x
+                            offsetY += pan.y
+                        } else {
+                            offsetX = 0f
+                            offsetY = 0f
+                        }
+                    }
+                }
+                .pointerInput(index, scale) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            if (scale > 1f) {
                                 scale = 1f
                                 offsetX = 0f
                                 offsetY = 0f
-                            }
-
-                            event.changes.forEach {
-                                it.consume()
+                            } else {
+                                scale = 2.5f
                             }
                         }
+                    )
+                }
+                .pointerInput(index, scale) {
+                    var swipe = 0f
 
-                        if (
-                            !multiTouch &&
-                            scale <= 1.01f &&
-                            !animating &&
-                            bitmap != null
-                        ) {
-
-                            val threshold = size.width * 0.18f
-
-                            val target = when {
-                                swipeX < -threshold &&
-                                    currentIndex < photos.lastIndex ->
-                                    currentIndex + 1
-
-                                swipeX > threshold &&
-                                    currentIndex > 0 ->
-                                    currentIndex - 1
-
-                                else -> currentIndex
+                    detectDragGesturesAfterLongPress(
+                        onDrag = { change, amount ->
+                            if (scale <= 1.01f) {
+                                swipe += amount.x
+                                change.consume()
                             }
-
-                            if (target != currentIndex) {
-
-                                val direction =
-                                    if (target > currentIndex) 1f else -1f
-
-                                val width = size.width.toFloat()
-
-                                scope.launch {
-
-                                    animating = true
-
-                                    val nextBitmap = loadFullPhoto(
-                                        context,
-                                        photos[target]
-                                    )
-
-                                    if (nextBitmap != null) {
-
-                                        slide.animateTo(
-                                            -direction * width,
-                                            animationSpec = tween(280)
-                                        )
-
-                                        currentIndex = target
-                                        bitmap = nextBitmap
-
-                                        scale = 1f
-                                        offsetX = 0f
-                                        offsetY = 0f
-
-                                        slide.snapTo(direction * width)
-
-                                        slide.animateTo(
-                                            0f,
-                                            animationSpec = tween(280)
-                                        )
-                                    }
-
-                                    animating = false
+                        },
+                        onDragEnd = {
+                            if (abs(swipe) > size.width * 0.2f) {
+                                if (swipe < 0 && index < photos.lastIndex) {
+                                    index++
+                                } else if (swipe > 0 && index > 0) {
+                                    index--
                                 }
                             }
+                            swipe = 0f
                         }
-                    }
+                    )
                 },
             contentAlignment = Alignment.Center
         ) {
-
             when {
-
-                loading -> {
-                    CircularProgressIndicator(color = Color.White)
-                }
+                loading -> CircularProgressIndicator(
+                    color = Color.White
+                )
 
                 bitmap != null -> {
                     Image(
                         bitmap = bitmap!!.asImageBitmap(),
-                        contentDescription = "Full resolution photo",
+                        contentDescription = "Full Screen Photo",
+                        contentScale = ContentScale.Fit,
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
                                 scaleX = scale
                                 scaleY = scale
-                                translationX = offsetX + slide.value
+                                translationX = offsetX
                                 translationY = offsetY
-                            },
-                        contentScale = ContentScale.Fit
+                            }
                     )
                 }
 
-                else -> {
-                    Text(
-                        "Unable to load photo",
-                        color = Color.White
-                    )
-                }
+                else -> Text(
+                    "Unable to load photo",
+                    color = Color.White
+                )
             }
         }
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "‹ Previous",
+                color = if (index > 0) Color.White else Color.Gray,
+                modifier = Modifier.clickable {
+                    if (index > 0) index--
+                }
+            )
+
+            Text(
+                "Next ›",
+                color = if (index < photos.lastIndex)
+                    Color.White else Color.Gray,
+                modifier = Modifier.clickable {
+                    if (index < photos.lastIndex) index++
+                }
+            )
+        }
+    }
+
+    if (detailsOpen) {
+        val uri = photos[index]
+
+        var name = "Unknown"
+        var size = "Unknown"
+        var date = "Unknown"
+        var resolution = "Unknown"
+
+        try {
+            context.contentResolver.query(
+                uri,
+                arrayOf(
+                    MediaStore.Images.Media.DISPLAY_NAME,
+                    MediaStore.Images.Media.SIZE,
+                    MediaStore.Images.Media.DATE_ADDED,
+                    MediaStore.Images.Media.WIDTH,
+                    MediaStore.Images.Media.HEIGHT
+                ),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    name = cursor.getString(0) ?: "Unknown"
+                    size = "${cursor.getLong(1) / 1024} KB"
+                    date = java.text.SimpleDateFormat(
+                        "dd MMM yyyy HH:mm",
+                        java.util.Locale.getDefault()
+                    ).format(
+                        java.util.Date(cursor.getLong(2) * 1000)
+                    )
+                    resolution =
+                        "${cursor.getInt(3)} × ${cursor.getInt(4)}"
+                }
+            }
+        } catch (_: Exception) {}
+
+        AlertDialog(
+            onDismissRequest = { detailsOpen = false },
+            title = { Text("Photo Details") },
+            text = {
+                Column {
+                    Text("Name: $name")
+                    Text("Size: $size")
+                    Text("Date: $date")
+                    Text("Resolution: $resolution")
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { detailsOpen = false }
+                ) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    if (deleteDialog) {
+        AlertDialog(
+            onDismissRequest = { deleteDialog = false },
+            title = { Text("Delete Photo?") },
+            text = {
+                Text("Are you sure you want to delete this photo?")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        deleteDialog = false
+                        onDelete(photos[index])
+                    }
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { deleteDialog = false }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (wallpaperDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                wallpaperDialog = false
+            },
+            title = { Text("Set as Wallpaper") },
+            text = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            wallpaperDialog = false
+                            setWallpaper(WallpaperManager.FLAG_SYSTEM)
+                        }
+                    ) {
+                        Text("Home Screen")
+                    }
+
+                    TextButton(
+                        onClick = {
+                            wallpaperDialog = false
+                            setWallpaper(WallpaperManager.FLAG_LOCK)
+                        }
+                    ) {
+                        Text("Lock Screen")
+                    }
+
+                    TextButton(
+                        onClick = {
+                            wallpaperDialog = false
+                            setWallpaper(
+                                WallpaperManager.FLAG_SYSTEM or
+                                    WallpaperManager.FLAG_LOCK
+                            )
+                        }
+                    ) {
+                        Text("Both")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        wallpaperDialog = false
+                    }
+                ) {
+                    Text("Close")
+                }
+            }
+        )
     }
 }
