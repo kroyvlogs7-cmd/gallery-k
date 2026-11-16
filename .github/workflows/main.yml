@@ -26,11 +26,12 @@ jobs:
           wget https://services.gradle.org/distributions/gradle-8.9-bin.zip
           unzip -q gradle-8.9-bin.zip
 
-      - name: Build APK
-        run: ./gradle-8.9/bin/gradle assembleDebug
+      - name: Clean and Build APK
+        run: ./gradle-8.9/bin/gradle clean assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Gallery-K-APK
           path: app/build/outputs/apk/debug/app-debug.apk
+
