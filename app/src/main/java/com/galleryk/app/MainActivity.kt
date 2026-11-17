@@ -9,7 +9,9 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.MediaStore
+import android.media.AudioManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -33,6 +35,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.awaitEachGesture
+import androidx.compose.ui.input.pointer.awaitFirstDown
+import androidx.compose.ui.input.pointer.awaitPointerEvent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +54,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.sqrt
 
 data class GalleryMedia(
     val uri: Uri,
@@ -917,6 +924,11 @@ private fun VideoPlayer(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val audioManager = remember {
+        context.getSystemService(
+            android.content.Context.AUDIO_SERVICE
+        ) as AudioManager
+    }
 
     val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
@@ -926,12 +938,18 @@ private fun VideoPlayer(
         }
     }
 
+    val lastTapTime = remember {
+        mutableLongStateOf(0L)
+    }
+
     DisposableEffect(activity, exoPlayer) {
         val window = activity?.window
-
         val controller = window?.let {
             WindowInsetsControllerCompat(it, it.decorView)
         }
+
+        val originalBrightness =
+            window?.attributes?.screenBrightness ?: -1f
 
         controller?.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -939,6 +957,12 @@ private fun VideoPlayer(
         controller?.hide(WindowInsetsCompat.Type.systemBars())
 
         onDispose {
+            if (window != null) {
+                val params = window.attributes
+                params.screenBrightness = originalBrightness
+                window.attributes = params
+            }
+
             controller?.show(WindowInsetsCompat.Type.systemBars())
             exoPlayer.release()
         }
@@ -948,17 +972,158 @@ private fun VideoPlayer(
         onBack()
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .pointerInput(exoPlayer, activity) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(
+                        requireUnconsumed = false
+                    )
+
+                    val startPosition = down.position
+                    val startTime = SystemClock.uptimeMillis()
+
+                    var mode = 0
+                    var finished = false
+
+                    val screenWidth = size.width.toFloat()
+                    val screenHeight = size.height.toFloat()
+
+                    val startBrightness =
+                        activity?.window?.attributes?.screenBrightness
+                            ?.takeIf { it >= 0f } ?: 0.5f
+
+                    val startVolume =
+                        audioManager.getStreamVolume(
+                            AudioManager.STREAM_MUSIC
+                        )
+
+                    val maxVolume =
+                        audioManager.getStreamMaxVolume(
+                            AudioManager.STREAM_MUSIC
+                        )
+
+                    val startPositionMs = exoPlayer.currentPosition
+                    val videoDuration = exoPlayer.duration
+
+                    while (!finished) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull {
+                            it.id == down.id
+                        } ?: break
+
+                        if (!change.pressed) {
+                            finished = true
+                        } else {
+                            val dx =
+                                change.position.x - startPosition.x
+                            val dy =
+                                change.position.y - startPosition.y
+
+                            val distance = sqrt(dx * dx + dy * dy)
+
+                            if (
+                                mode == 0 &&
+                                distance > viewConfiguration.touchSlop
+                            ) {
+                                mode = when {
+                                    kotlin.math.abs(dx) >
+                                        kotlin.math.abs(dy) -> 1
+
+                                    startPosition.x < screenWidth / 2f -> 2
+
+                                    else -> 3
+                                }
+                            }
+
+                            when (mode) {
+                                1 -> {
+                                    if (videoDuration > 0) {
+                                        val seekChange =
+                                            (dx / screenWidth) *
+                                                videoDuration
+
+                                        val newPosition =
+                                            (startPositionMs + seekChange)
+                                                .toLong()
+                                                .coerceIn(
+                                                    0L,
+                                                    videoDuration
+                                                )
+
+                                        exoPlayer.seekTo(newPosition)
+                                    }
+                                    change.consume()
+                                }
+
+                                2 -> {
+                                    val brightnessChange =
+                                        -dy / screenHeight
+
+                                    val newBrightness =
+                                        (startBrightness +
+                                            brightnessChange)
+                                            .coerceIn(0.01f, 1f)
+
+                                    activity?.window?.let { window ->
+                                        val params = window.attributes
+                                        params.screenBrightness =
+                                            newBrightness
+                                        window.attributes = params
+                                    }
+
+                                    change.consume()
+                                }
+
+                                3 -> {
+                                    val volumeChange =
+                                        (-dy / screenHeight) * maxVolume
+
+                                    val newVolume =
+                                        (startVolume + volumeChange)
+                                            .toInt()
+                                            .coerceIn(0, maxVolume)
+
+                                    audioManager.setStreamVolume(
+                                        AudioManager.STREAM_MUSIC,
+                                        newVolume,
+                                        0
+                                    )
+
+                                    change.consume()
+                                }
+                            }
+                        }
+                    }
+
+                    if (mode == 0) {
+                        val now = SystemClock.uptimeMillis()
+
+                        if (
+                            now - lastTapTime.longValue <= 300L &&
+                            lastTapTime.longValue != 0L
+                        ) {
+                            exoPlayer.playWhenReady =
+                                !exoPlayer.playWhenReady
+
+                            lastTapTime.longValue = 0L
+                        } else {
+                            lastTapTime.longValue = now
+                        }
+                    }
+                }
+            }
     ) {
         AndroidView(
             factory = { viewContext ->
                 PlayerView(viewContext).apply {
                     player = exoPlayer
-                    useController = true
-                    controllerShowTimeoutMs = 2500
+
+                    // Playback controls permanently hidden
+                    useController = false
+
                     resizeMode =
                         AspectRatioFrameLayout.RESIZE_MODE_FIT
 
@@ -969,6 +1134,7 @@ private fun VideoPlayer(
             },
             update = { playerView ->
                 playerView.player = exoPlayer
+                playerView.useController = false
                 playerView.resizeMode =
                     AspectRatioFrameLayout.RESIZE_MODE_FIT
             },
