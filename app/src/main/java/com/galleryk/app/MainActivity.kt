@@ -6,7 +6,6 @@ import android.app.Activity
 import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -872,17 +871,12 @@ private fun VideoPlayer(
     val activity = context as? Activity
     val density = LocalDensity.current.density
 
-    val audioManager = remember {
-        context.getSystemService(
-            android.content.Context.AUDIO_SERVICE
-        ) as AudioManager
-    }
-
     val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(uri))
             prepare()
             playWhenReady = true
+            volume = 1f
         }
     }
 
@@ -999,11 +993,11 @@ private fun VideoPlayer(
                     )
                 }
 
-                // Vertical swipe: Brightness / Volume
+                // Vertical swipe: Brightness / Smooth Video Volume
                 .pointerInput(exoPlayer, density, activity) {
                     var brightnessSide = false
                     var startBrightness = 0.5f
-                    var startVolume = 0
+                    var startVolume = 1f
                     var dragDistance = 0f
 
                     detectVerticalDragGestures(
@@ -1026,19 +1020,11 @@ private fun VideoPlayer(
                                 indicatorType = "brightness"
                                 indicatorLevel = startBrightness
                             } else {
-                                startVolume = audioManager.getStreamVolume(
-                                    AudioManager.STREAM_MUSIC
-                                )
-
-                                val maxVolume = audioManager.getStreamMaxVolume(
-                                    AudioManager.STREAM_MUSIC
-                                )
+                                startVolume = exoPlayer.volume
+                                    .coerceIn(0f, 1f)
 
                                 indicatorType = "volume"
-                                indicatorLevel =
-                                    if (maxVolume > 0) {
-                                        startVolume.toFloat() / maxVolume
-                                    } else 0f
+                                indicatorLevel = startVolume
                             }
 
                             indicatorVisible = true
@@ -1065,27 +1051,13 @@ private fun VideoPlayer(
 
                                 indicatorLevel = newBrightness
                             } else {
-                                val maxVolume = audioManager.getStreamMaxVolume(
-                                    AudioManager.STREAM_MUSIC
-                                )
-
-                                val volumeChange =
-                                    (-adjustment * maxVolume).toInt()
-
+                                // Smooth volume: 0.0 to 1.0
                                 val newVolume =
-                                    (startVolume + volumeChange)
-                                        .coerceIn(0, maxVolume)
+                                    (startVolume - adjustment)
+                                        .coerceIn(0f, 1f)
 
-                                audioManager.setStreamVolume(
-                                    AudioManager.STREAM_MUSIC,
-                                    newVolume,
-                                    0
-                                )
-
-                                indicatorLevel =
-                                    if (maxVolume > 0) {
-                                        newVolume.toFloat() / maxVolume
-                                    } else 0f
+                                exoPlayer.volume = newVolume
+                                indicatorLevel = newVolume
                             }
 
                             indicatorVisible = true
@@ -1141,7 +1113,7 @@ private fun VideoPlayer(
             }
         }
 
-        // Slim vertical volume indicator
+        // Slim vertical smooth volume indicator
         if (indicatorVisible && indicatorType == "volume") {
             Column(
                 modifier = Modifier
