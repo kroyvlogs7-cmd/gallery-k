@@ -85,10 +85,12 @@ private fun requiredPermissions(): Array<String> {
             Manifest.permission.READ_MEDIA_VIDEO,
             Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
         )
+
         Build.VERSION.SDK_INT >= 33 -> arrayOf(
             Manifest.permission.READ_MEDIA_IMAGES,
             Manifest.permission.READ_MEDIA_VIDEO
         )
+
         else -> arrayOf(
             Manifest.permission.READ_EXTERNAL_STORAGE
         )
@@ -160,7 +162,9 @@ private suspend fun loadGallery(
                     cursor.getColumnIndexOrThrow(
                         MediaStore.Video.VideoColumns.DURATION
                     )
-                } else -1
+                } else {
+                    -1
+                }
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idIndex)
@@ -994,6 +998,7 @@ private fun VideoPlayer(
         mutableIntStateOf(0)
     }
 
+    // Hide indicator 1.5 seconds after the last swipe update
     LaunchedEffect(indicatorResetKey) {
         if (indicatorVisible) {
             delay(1500)
@@ -1059,6 +1064,7 @@ private fun VideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
+        // Gesture detection layer
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1076,7 +1082,7 @@ private fun VideoPlayer(
                     )
                 }
 
-                // Horizontal swipe: Forward / Backward
+                // Horizontal swipe: Live Forward / Backward
                 .pointerInput(exoPlayer, density) {
                     var startPosition = 0L
                     var dragDistancePx = 0f
@@ -1149,6 +1155,7 @@ private fun VideoPlayer(
                                     )
 
                                 indicatorType = "volume"
+
                                 indicatorLevel =
                                     if (maxVolume > 0) {
                                         startVolume.toFloat() / maxVolume
@@ -1164,10 +1171,11 @@ private fun VideoPlayer(
                             change.consume()
                             dragDistance += dragAmount
 
-                            val adjustment =
-                                dragDistance / size.height.toFloat()
-
                             if (brightnessSide) {
+                                // Full screen-height swipe = full brightness range
+                                val adjustment =
+                                    dragDistance / size.height.toFloat()
+
                                 val newBrightness =
                                     (startBrightness - adjustment)
                                         .coerceIn(0.01f, 1f)
@@ -1181,6 +1189,10 @@ private fun VideoPlayer(
 
                                 indicatorLevel = newBrightness
                             } else {
+                                // 25% screen-height swipe = full volume range
+                                val adjustment =
+                                    dragDistance / (size.height * 0.25f)
+
                                 val maxVolume =
                                     audioManager.getStreamMaxVolume(
                                         AudioManager.STREAM_MUSIC
@@ -1218,84 +1230,87 @@ private fun VideoPlayer(
                 }
         )
 
-        // Brightness indicator
+        // Slim vertical brightness indicator
         if (indicatorVisible && indicatorType == "brightness") {
             Column(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .padding(start = 22.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xCC222222))
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(start = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
                 Text(
                     "☀",
                     color = Color.White,
-                    fontSize = 28.sp
+                    fontSize = 18.sp
                 )
 
-                Spacer(Modifier.height(10.dp))
-
-                LinearProgressIndicator(
-                    progress = {
-                        indicatorLevel.coerceIn(0f, 1f)
-                    },
+                Box(
                     modifier = Modifier
-                        .width(85.dp)
-                        .height(5.dp)
-                        .clip(RoundedCornerShape(10.dp)),
-                    color = Color.White,
-                    trackColor = Color.DarkGray
-                )
-
-                Spacer(Modifier.height(6.dp))
+                        .width(5.dp)
+                        .height(68.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0x66FFFFFF))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .fillMaxHeight(
+                                indicatorLevel.coerceIn(0.01f, 1f)
+                            )
+                            .background(Color.White)
+                    )
+                }
 
                 Text(
                     "${(indicatorLevel * 100).toInt()}%",
                     color = Color.White,
-                    fontSize = 12.sp
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }
 
-        // Volume indicator
+        // Slim vertical volume indicator
         if (indicatorVisible && indicatorType == "volume") {
             Column(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .padding(end = 22.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xCC222222))
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(end = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
                 Text(
-                    "🔊",
+                    "◖))",
                     color = Color.White,
-                    fontSize = 28.sp
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
                 )
 
-                Spacer(Modifier.height(10.dp))
-
-                LinearProgressIndicator(
-                    progress = {
-                        indicatorLevel.coerceIn(0f, 1f)
-                    },
+                Box(
                     modifier = Modifier
-                        .width(85.dp)
-                        .height(5.dp)
-                        .clip(RoundedCornerShape(10.dp)),
-                    color = Color.White,
-                    trackColor = Color.DarkGray
-                )
-
-                Spacer(Modifier.height(6.dp))
+                        .width(5.dp)
+                        .height(68.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0x66FFFFFF))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .fillMaxHeight(
+                                indicatorLevel.coerceIn(0.01f, 1f)
+                            )
+                            .background(Color.White)
+                    )
+                }
 
                 Text(
                     "${(indicatorLevel * 100).toInt()}%",
                     color = Color.White,
-                    fontSize = 12.sp
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }
