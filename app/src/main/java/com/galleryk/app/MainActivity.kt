@@ -22,6 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -36,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -957,6 +959,7 @@ private fun VideoPlayer(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val density = LocalDensity.current.density
 
     val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
@@ -998,10 +1001,8 @@ private fun VideoPlayer(
                 PlayerView(viewContext).apply {
                     player = exoPlayer
                     useController = false
-
                     resizeMode =
                         AspectRatioFrameLayout.RESIZE_MODE_FIT
-
                     setShowBuffering(
                         PlayerView.SHOW_BUFFERING_WHEN_PLAYING
                     )
@@ -1016,7 +1017,7 @@ private fun VideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Double tap overlay. Single tap does nothing.
+        // Double tap: Play / Pause. Single tap: No action.
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1028,6 +1029,39 @@ private fun VideoPlayer(
                             } else {
                                 exoPlayer.play()
                             }
+                        }
+                    )
+                }
+                .pointerInput(exoPlayer, density) {
+                    var startPosition = 0L
+                    var dragDistancePx = 0f
+                    var targetPosition = 0L
+
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            startPosition = exoPlayer.currentPosition
+                            dragDistancePx = 0f
+                            targetPosition = startPosition
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            dragDistancePx += dragAmount
+
+                            val dragDp = dragDistancePx / density
+                            val timeChange = (dragDp * 100L).toLong()
+
+                            targetPosition =
+                                (startPosition + timeChange)
+                                    .coerceAtLeast(0L)
+
+                            val duration = exoPlayer.duration
+                            if (duration > 0L) {
+                                targetPosition =
+                                    targetPosition.coerceAtMost(duration)
+                            }
+                        },
+                        onDragEnd = {
+                            exoPlayer.seekTo(targetPosition)
                         }
                     )
                 }
