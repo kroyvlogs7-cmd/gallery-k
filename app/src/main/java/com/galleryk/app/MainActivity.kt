@@ -21,6 +21,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -39,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -995,9 +997,6 @@ private fun VideoPlayer(
             factory = { viewContext ->
                 PlayerView(viewContext).apply {
                     player = exoPlayer
-
-                    // Only change in this step:
-                    // permanently hide all playback controls.
                     useController = false
 
                     resizeMode =
@@ -1015,6 +1014,23 @@ private fun VideoPlayer(
                     AspectRatioFrameLayout.RESIZE_MODE_FIT
             },
             modifier = Modifier.fillMaxSize()
+        )
+
+        // Double tap overlay. Single tap does nothing.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(exoPlayer) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            if (exoPlayer.isPlaying) {
+                                exoPlayer.pause()
+                            } else {
+                                exoPlayer.play()
+                            }
+                        }
+                    )
+                }
         )
     }
 }
