@@ -1048,9 +1048,9 @@ private fun VideoPlayer(
                             change.consume()
                             dragDistance += dragAmount
 
-                            // Same 35% swipe sensitivity for both
+                            // Same 60% swipe sensitivity for both
                             val adjustment =
-                                dragDistance / (size.height * 0.35f)
+                                dragDistance / (size.height * 0.60f)
 
                             if (brightnessSide) {
                                 val newBrightness =
