@@ -1,11 +1,13 @@
+
 package com.galleryk.app
 
 import android.Manifest
 import android.app.Activity
 import android.content.ContentUris
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -23,9 +25,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -51,12 +51,15 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 import kotlin.math.min
 
 data class GalleryMedia(
@@ -92,15 +95,11 @@ private fun requiredPermissions(): Array<String> {
             Manifest.permission.READ_MEDIA_IMAGES,
             Manifest.permission.READ_MEDIA_VIDEO
         )
-        else -> arrayOf(
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        )
+        else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 }
 
-private fun hasMediaPermission(
-    context: android.content.Context
-): Boolean {
+private fun hasMediaPermission(context: Context): Boolean {
     return requiredPermissions().any {
         ContextCompat.checkSelfPermission(context, it) ==
             PackageManager.PERMISSION_GRANTED
@@ -108,34 +107,28 @@ private fun hasMediaPermission(
 }
 
 private suspend fun loadGallery(
-    context: android.content.Context
+    context: Context
 ): Pair<List<GalleryMedia>, List<PhotoAlbum>> =
     withContext(Dispatchers.IO) {
-
         val allMedia = mutableListOf<GalleryMedia>()
 
         fun readCollection(collection: Uri, isVideo: Boolean) {
-            val idColumnName = MediaStore.MediaColumns._ID
-            val bucketIdName = MediaStore.Images.ImageColumns.BUCKET_ID
-            val bucketNameName =
+            val idColumn = MediaStore.MediaColumns._ID
+            val bucketIdColumn = MediaStore.Images.ImageColumns.BUCKET_ID
+            val bucketNameColumn =
                 MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME
-            val dateName = MediaStore.MediaColumns.DATE_ADDED
+            val dateColumn = MediaStore.MediaColumns.DATE_ADDED
 
             val projection = if (isVideo) {
                 arrayOf(
-                    idColumnName,
-                    bucketIdName,
-                    bucketNameName,
-                    dateName,
+                    idColumn,
+                    bucketIdColumn,
+                    bucketNameColumn,
+                    dateColumn,
                     MediaStore.Video.VideoColumns.DURATION
                 )
             } else {
-                arrayOf(
-                    idColumnName,
-                    bucketIdName,
-                    bucketNameName,
-                    dateName
-                )
+                arrayOf(idColumn, bucketIdColumn, bucketNameColumn, dateColumn)
             }
 
             context.contentResolver.query(
@@ -143,17 +136,14 @@ private suspend fun loadGallery(
                 projection,
                 null,
                 null,
-                "$dateName DESC"
+                "$dateColumn DESC"
             )?.use { cursor ->
-
-                val idIndex = cursor.getColumnIndexOrThrow(idColumnName)
+                val idIndex = cursor.getColumnIndexOrThrow(idColumn)
                 val bucketIdIndex =
-                    cursor.getColumnIndexOrThrow(bucketIdName)
+                    cursor.getColumnIndexOrThrow(bucketIdColumn)
                 val bucketNameIndex =
-                    cursor.getColumnIndexOrThrow(bucketNameName)
-                val dateIndex =
-                    cursor.getColumnIndexOrThrow(dateName)
-
+                    cursor.getColumnIndexOrThrow(bucketNameColumn)
+                val dateIndex = cursor.getColumnIndexOrThrow(dateColumn)
                 val durationIndex = if (isVideo) {
                     cursor.getColumnIndexOrThrow(
                         MediaStore.Video.VideoColumns.DURATION
@@ -162,68 +152,43 @@ private suspend fun loadGallery(
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idIndex)
-                    val uri = ContentUris.withAppendedId(collection, id)
-                    val bucketId =
-                        cursor.getString(bucketIdIndex) ?: "unknown"
-                    val bucketName =
-                        cursor.getString(bucketNameIndex) ?: "Other"
-                    val dateAdded = cursor.getLong(dateIndex)
-
-                    val duration = if (isVideo) {
-                        cursor.getLong(durationIndex)
-                    } else 0L
-
                     allMedia.add(
                         GalleryMedia(
-                            uri,
-                            isVideo,
-                            duration,
-                            bucketId,
-                            bucketName,
-                            dateAdded
+                            uri = ContentUris.withAppendedId(collection, id),
+                            isVideo = isVideo,
+                            duration = if (isVideo) {
+                                cursor.getLong(durationIndex)
+                            } else 0L,
+                            albumId = cursor.getString(bucketIdIndex) ?: "unknown",
+                            albumName = cursor.getString(bucketNameIndex) ?: "Other",
+                            dateAdded = cursor.getLong(dateIndex)
                         )
                     )
                 }
             }
         }
 
-        readCollection(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            false
-        )
+        readCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false)
+        readCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true)
 
-        readCollection(
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-            true
-        )
-
-        val sortedMedia = allMedia.sortedByDescending {
-            it.dateAdded
+        val sorted = allMedia.sortedByDescending { it.dateAdded }
+        val albums = sorted.groupBy { it.albumId }.map { (id, media) ->
+            PhotoAlbum(
+                id = id,
+                name = media.firstOrNull()?.albumName ?: "Other",
+                media = media
+            )
         }
 
-        val albumList = sortedMedia
-            .groupBy { it.albumId }
-            .map { (id, items) ->
-                PhotoAlbum(
-                    id = id,
-                    name = items.firstOrNull()?.albumName ?: "Other",
-                    media = items
-                )
-            }
-
-        Pair(sortedMedia, albumList)
+        Pair(sorted, albums)
     }
 
 @Composable
 fun GalleryKApp() {
     val context = LocalContext.current
 
-    var allMedia by remember {
-        mutableStateOf(listOf<GalleryMedia>())
-    }
-    var albums by remember {
-        mutableStateOf(listOf<PhotoAlbum>())
-    }
+    var allMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
+    var albums by remember { mutableStateOf(listOf<PhotoAlbum>()) }
     var selectedIndex by remember { mutableIntStateOf(-1) }
     var selectedAlbumId by remember { mutableStateOf<String?>(null) }
     var selectedTab by remember { mutableStateOf("Photos") }
@@ -233,35 +198,29 @@ fun GalleryKApp() {
     var selectedUris by remember { mutableStateOf(setOf<Uri>()) }
     var refreshKey by remember { mutableIntStateOf(0) }
 
-    val permissionLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestMultiplePermissions()
-        ) {
-            permissionGranted = hasMediaPermission(context)
-        }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        permissionGranted = hasMediaPermission(context)
+    }
 
-    val deleteLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.StartIntentSenderForResult()
-        ) { result ->
+    val deleteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        Toast.makeText(
+            context,
             if (result.resultCode == Activity.RESULT_OK) {
-                Toast.makeText(
-                    context,
-                    "Selected media deleted",
-                    Toast.LENGTH_SHORT
-                ).show()
+                "Selected media deleted"
             } else {
-                Toast.makeText(
-                    context,
-                    "Deletion cancelled",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
+                "Deletion cancelled"
+            },
+            Toast.LENGTH_SHORT
+        ).show()
 
-            selectedUris = emptySet()
-            selectionMode = false
-            refreshKey++
-        }
+        selectedUris = emptySet()
+        selectionMode = false
+        refreshKey++
+    }
 
     LaunchedEffect(Unit) {
         permissionGranted = hasMediaPermission(context)
@@ -274,6 +233,8 @@ fun GalleryKApp() {
                 val result = loadGallery(context)
                 allMedia = result.first
                 albums = result.second
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Toast.makeText(
                     context,
@@ -286,9 +247,7 @@ fun GalleryKApp() {
         }
     }
 
-    val currentAlbum = albums.find {
-        it.id == selectedAlbumId
-    }
+    val currentAlbum = albums.find { it.id == selectedAlbumId }
 
     val tabMedia = when (selectedTab) {
         "Videos" -> allMedia.filter { it.isVideo }
@@ -306,11 +265,8 @@ fun GalleryKApp() {
                     context.contentResolver,
                     selectedUris.toList()
                 )
-
                 deleteLauncher.launch(
-                    IntentSenderRequest.Builder(
-                        request.intentSender
-                    ).build()
+                    IntentSenderRequest.Builder(request.intentSender).build()
                 )
             } catch (_: Exception) {
                 Toast.makeText(
@@ -350,10 +306,7 @@ fun GalleryKApp() {
             modifier = Modifier.fillMaxSize(),
             color = Color(0xFF101114)
         ) {
-            if (
-                selectedIndex >= 0 &&
-                selectedIndex < displayedMedia.size
-            ) {
+            if (selectedIndex >= 0 && selectedIndex < displayedMedia.size) {
                 val current = displayedMedia[selectedIndex]
 
                 if (current.isVideo) {
@@ -372,9 +325,7 @@ fun GalleryKApp() {
             } else {
                 Column(Modifier.fillMaxSize()) {
                     Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
+                        Modifier.fillMaxWidth().padding(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
@@ -386,7 +337,6 @@ fun GalleryKApp() {
                                 fontSize = 27.sp,
                                 fontWeight = FontWeight.Bold
                             )
-
                             Text(
                                 if (selectionMode) {
                                     "Select media to manage"
@@ -402,23 +352,17 @@ fun GalleryKApp() {
                             TextButton(
                                 onClick = {
                                     selectedUris =
-                                        if (
-                                            selectedUris.size ==
-                                            displayedMedia.size
-                                        ) {
+                                        if (selectedUris.size == displayedMedia.size) {
                                             emptySet()
                                         } else {
-                                            displayedMedia.map {
-                                                it.uri
-                                            }.toSet()
+                                            displayedMedia.map { it.uri }.toSet()
                                         }
                                 }
                             ) {
                                 Text(
-                                    if (
-                                        selectedUris.size ==
-                                        displayedMedia.size
-                                    ) "Deselect All" else "Select All",
+                                    if (selectedUris.size == displayedMedia.size) {
+                                        "Deselect All"
+                                    } else "Select All",
                                     color = Color.White
                                 )
                             }
@@ -427,11 +371,8 @@ fun GalleryKApp() {
 
                     if (selectionMode) {
                         Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp),
-                            horizontalArrangement =
-                                Arrangement.spacedBy(12.dp)
+                            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Button(
                                 modifier = Modifier.weight(1f),
@@ -453,15 +394,11 @@ fun GalleryKApp() {
                         }
                     } else {
                         Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp),
-                            horizontalArrangement =
-                                Arrangement.spacedBy(8.dp)
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             listOf("Photos", "Videos", "Albums").forEach { tab ->
                                 val active = selectedTab == tab
-
                                 Box(
                                     Modifier
                                         .weight(1f)
@@ -497,9 +434,7 @@ fun GalleryKApp() {
                             ) {
                                 Button(
                                     onClick = {
-                                        permissionLauncher.launch(
-                                            requiredPermissions()
-                                        )
+                                        permissionLauncher.launch(requiredPermissions())
                                     }
                                 ) {
                                     Text("Allow Photos and Videos")
@@ -516,16 +451,11 @@ fun GalleryKApp() {
                             }
                         }
 
-                        selectedTab == "Albums" &&
-                            selectedAlbumId == null -> {
-
+                        selectedTab == "Albums" && selectedAlbumId == null -> {
                             Text(
                                 "${albums.size} Albums",
                                 color = Color.LightGray,
-                                modifier = Modifier.padding(
-                                    start = 20.dp,
-                                    bottom = 10.dp
-                                )
+                                modifier = Modifier.padding(start = 20.dp, bottom = 10.dp)
                             )
 
                             if (albums.isEmpty()) {
@@ -533,10 +463,7 @@ fun GalleryKApp() {
                                     Modifier.fillMaxSize(),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        "No albums found",
-                                        color = Color.White
-                                    )
+                                    Text("No albums found", color = Color.White)
                                 }
                             } else {
                                 LazyVerticalGrid(
@@ -570,15 +497,10 @@ fun GalleryKApp() {
                         else -> {
                             Text(
                                 "${displayedMedia.size} ${
-                                    if (selectedTab == "Videos") {
-                                        "Videos"
-                                    } else "Photos"
+                                    if (selectedTab == "Videos") "Videos" else "Photos"
                                 }",
                                 color = Color.LightGray,
-                                modifier = Modifier.padding(
-                                    start = 20.dp,
-                                    bottom = 10.dp
-                                )
+                                modifier = Modifier.padding(start = 20.dp, bottom = 10.dp)
                             )
 
                             LazyVerticalGrid(
@@ -601,19 +523,16 @@ fun GalleryKApp() {
                                                     } else {
                                                         selectedUris + media.uri
                                                     }
-
                                                 if (selectedUris.isEmpty()) {
                                                     selectionMode = false
                                                 }
                                             } else {
-                                                selectedIndex =
-                                                    displayedMedia.indexOf(media)
+                                                selectedIndex = displayedMedia.indexOf(media)
                                             }
                                         },
                                         onLongClick = {
                                             selectionMode = true
-                                            selectedUris =
-                                                selectedUris + media.uri
+                                            selectedUris = selectedUris + media.uri
                                         }
                                     )
                                 }
@@ -626,11 +545,9 @@ fun GalleryKApp() {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun AlbumCard(
-    album: PhotoAlbum,
-    onClick: () -> Unit
-) {
+private fun AlbumCard(album: PhotoAlbum, onClick: () -> Unit) {
     Column(
         Modifier
             .padding(5.dp)
@@ -647,21 +564,14 @@ private fun AlbumCard(
                 onLongClick = onClick
             )
         }
-
         Spacer(Modifier.height(8.dp))
-
         Text(
             album.name,
             color = Color.White,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1
         )
-
-        Text(
-            "${album.media.size} items",
-            color = Color.Gray,
-            fontSize = 12.sp
-        )
+        Text("${album.media.size} items", color = Color.Gray, fontSize = 12.sp)
     }
 }
 
@@ -679,8 +589,8 @@ private fun MediaThumbnail(
         initialValue = null,
         key1 = media.uri
     ) {
-        value = withContext(Dispatchers.IO) {
-            try {
+        value = try {
+            withContext(Dispatchers.IO) {
                 if (Build.VERSION.SDK_INT >= 29) {
                     context.contentResolver.loadThumbnail(
                         media.uri,
@@ -688,14 +598,15 @@ private fun MediaThumbnail(
                         null
                     )
                 } else {
-                    context.contentResolver
-                        .openInputStream(media.uri)?.use {
-                            android.graphics.BitmapFactory.decodeStream(it)
-                        }
+                    context.contentResolver.openInputStream(media.uri)?.use {
+                        android.graphics.BitmapFactory.decodeStream(it)
+                    }
                 }
-            } catch (_: Exception) {
-                null
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -713,9 +624,7 @@ private fun MediaThumbnail(
         if (bitmap != null) {
             Image(
                 bitmap = bitmap!!.asImageBitmap(),
-                contentDescription =
-                    if (media.isVideo) "Video thumbnail"
-                    else "Photo thumbnail",
+                contentDescription = if (media.isVideo) "Video thumbnail" else "Photo thumbnail",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
@@ -730,17 +639,10 @@ private fun MediaThumbnail(
             Box(
                 Modifier
                     .align(Alignment.Center)
-                    .background(
-                        Color(0x99000000),
-                        RoundedCornerShape(50)
-                    )
+                    .background(Color(0x99000000), RoundedCornerShape(50))
                     .padding(horizontal = 9.dp, vertical = 5.dp)
             ) {
-                Text(
-                    "▶",
-                    color = Color.White,
-                    fontSize = 16.sp
-                )
+                Text("▶", color = Color.White, fontSize = 16.sp)
             }
 
             Text(
@@ -750,19 +652,14 @@ private fun MediaThumbnail(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(5.dp)
-                    .background(
-                        Color(0xAA000000),
-                        RoundedCornerShape(4.dp)
-                    )
+                    .background(Color(0xAA000000), RoundedCornerShape(4.dp))
                     .padding(horizontal = 4.dp, vertical = 2.dp)
             )
         }
 
         if (selected) {
             Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color(0x66000000)),
+                Modifier.fillMaxSize().background(Color(0x66000000)),
                 contentAlignment = Alignment.TopEnd
             ) {
                 Text(
@@ -772,10 +669,7 @@ private fun MediaThumbnail(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier
                         .padding(6.dp)
-                        .background(
-                            Color(0xFF2878D0),
-                            RoundedCornerShape(50)
-                        )
+                        .background(Color(0xFF2878D0), RoundedCornerShape(50))
                         .padding(horizontal = 7.dp, vertical = 2.dp)
                 )
             }
@@ -784,15 +678,15 @@ private fun MediaThumbnail(
 }
 
 private fun formatDuration(durationMs: Long): String {
-    val totalSeconds = durationMs / 1000
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
+    val seconds = durationMs / 1000
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val remainder = seconds % 60
 
     return if (hours > 0) {
-        String.format("%d:%02d:%02d", hours, minutes, seconds)
+        String.format("%d:%02d:%02d", hours, minutes, remainder)
     } else {
-        String.format("%d:%02d", minutes, seconds)
+        String.format("%d:%02d", minutes, remainder)
     }
 }
 
@@ -804,33 +698,27 @@ private fun PhotoViewer(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-
-    var bitmap by remember(uri) {
-        mutableStateOf<Bitmap?>(null)
-    }
+    var bitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
 
     LaunchedEffect(uri) {
-        bitmap = withContext(Dispatchers.IO) {
-            try {
-                context.contentResolver
-                    .openInputStream(uri)?.use {
-                        android.graphics.BitmapFactory.decodeStream(it)
-                    }
-            } catch (_: Exception) {
-                null
+        bitmap = try {
+            withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)?.use {
+                    android.graphics.BitmapFactory.decodeStream(it)
+                }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
         }
     }
 
     Column(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black)
+        Modifier.fillMaxSize().background(Color.Black)
     ) {
         Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -839,20 +727,12 @@ private fun PhotoViewer(
                 fontSize = 34.sp,
                 modifier = Modifier.clickable(onClick = onBack)
             )
-
             Spacer(Modifier.width(20.dp))
-
-            Text(
-                "Photo ${index + 1} / $total",
-                color = Color.White,
-                fontSize = 17.sp
-            )
+            Text("Photo ${index + 1} / $total", color = Color.White, fontSize = 17.sp)
         }
 
         Box(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth(),
+            Modifier.weight(1f).fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
             if (bitmap != null) {
@@ -870,55 +750,32 @@ private fun PhotoViewer(
 }
 
 @Composable
-private fun VideoPlayer(
-    uri: Uri,
-    onBack: () -> Unit
-) {
+private fun VideoPlayer(uri: Uri, onBack: () -> Unit) {
     val context = LocalContext.current
     val density = LocalDensity.current.density
 
     val activity = remember(context) {
-        var current = context
-        while (
-            current !is Activity &&
-            current is android.content.ContextWrapper
-        ) {
+        var current: Context = context
+        while (current !is Activity && current is ContextWrapper) {
             current = current.baseContext
         }
         current as? Activity
     }
 
     val exoPlayer = remember(uri) {
-        ExoPlayer.Builder(context).build().apply {
+        ExoPlayer.Builder(context.applicationContext).build().apply {
             setMediaItem(MediaItem.fromUri(uri))
-            prepare()
             playWhenReady = true
             volume = 1f
+            prepare()
         }
     }
 
-    var textureView by remember {
-        mutableStateOf<TextureView?>(null)
-    }
-
-    var videoWidth by remember { mutableIntStateOf(0) }
-    var videoHeight by remember { mutableIntStateOf(0) }
-
-    var rotationDegrees by remember(uri) {
-        mutableIntStateOf(0)
-    }
-
-    var zoom by remember(uri) {
-        mutableFloatStateOf(1f)
-    }
-
-    var panX by remember(uri) {
-        mutableFloatStateOf(0f)
-    }
-
-    var panY by remember(uri) {
-        mutableFloatStateOf(0f)
-    }
+    var textureView by remember { mutableStateOf<TextureView?>(null) }
+    var rotationDegrees by remember(uri) { mutableIntStateOf(0) }
+    var zoom by remember(uri) { mutableFloatStateOf(1f) }
+    var panX by remember(uri) { mutableFloatStateOf(0f) }
+    var panY by remember(uri) { mutableFloatStateOf(0f) }
 
     var indicatorType by remember { mutableStateOf("") }
     var indicatorLevel by remember { mutableFloatStateOf(0f) }
@@ -928,9 +785,10 @@ private fun VideoPlayer(
     var controlsVisible by remember { mutableStateOf(true) }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
-    var isScrubbing by remember { mutableStateOf(false) }
     var sliderPosition by remember { mutableFloatStateOf(0f) }
+    var isScrubbing by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(true) }
+    var playerError by remember { mutableStateOf<String?>(null) }
 
     fun resetVideoView() {
         rotationDegrees = 0
@@ -940,15 +798,14 @@ private fun VideoPlayer(
     }
 
     fun formatTime(ms: Long): String {
-        val totalSeconds = (ms / 1000).coerceAtLeast(0L)
-        val hours = totalSeconds / 3600
-        val minutes = (totalSeconds % 3600) / 60
-        val seconds = totalSeconds % 60
-
+        val seconds = (ms / 1000).coerceAtLeast(0L)
+        val hours = seconds / 3600
+        val minutes = (seconds % 3600) / 60
+        val remainder = seconds % 60
         return if (hours > 0) {
-            String.format("%d:%02d:%02d", hours, minutes, seconds)
+            String.format("%d:%02d:%02d", hours, minutes, remainder)
         } else {
-            String.format("%02d:%02d", minutes, seconds)
+            String.format("%02d:%02d", minutes, remainder)
         }
     }
 
@@ -964,8 +821,12 @@ private fun VideoPlayer(
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
-                videoWidth = videoSize.width
-                videoHeight = videoSize.height
+                // Video dimensions are handled by TextureView's fit mode.
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                playerError = error.message ?: "Unable to play this video"
+                controlsVisible = true
             }
         }
 
@@ -976,56 +837,14 @@ private fun VideoPlayer(
         }
     }
 
-    LaunchedEffect(textureView, videoWidth, videoHeight) {
-        val view = textureView ?: return@LaunchedEffect
-
-        if (videoWidth > 0 && videoHeight > 0) {
-            view.post {
-                val viewWidth = view.width.toFloat()
-                val viewHeight = view.height.toFloat()
-
-                if (viewWidth > 0f && viewHeight > 0f) {
-                    val videoRatio =
-                        videoWidth.toFloat() / videoHeight.toFloat()
-                    val viewRatio = viewWidth / viewHeight
-
-                    val scaleX: Float
-                    val scaleY: Float
-
-                    if (videoRatio > viewRatio) {
-                        scaleX = 1f
-                        scaleY = viewRatio / videoRatio
-                    } else {
-                        scaleX = videoRatio / viewRatio
-                        scaleY = 1f
-                    }
-
-                    val matrix = Matrix().apply {
-                        setScale(
-                            scaleX,
-                            scaleY,
-                            viewWidth / 2f,
-                            viewHeight / 2f
-                        )
-                    }
-
-                    view.setTransform(matrix)
-                }
-            }
-        }
-    }
-
     LaunchedEffect(exoPlayer, isScrubbing) {
         while (true) {
             duration = exoPlayer.duration.coerceAtLeast(0L)
-
             if (!isScrubbing) {
-                currentPosition =
-                    exoPlayer.currentPosition.coerceAtLeast(0L)
+                currentPosition = exoPlayer.currentPosition.coerceAtLeast(0L)
                 sliderPosition = currentPosition.toFloat()
             }
-
-            delay(200)
+            delay(250)
         }
     }
 
@@ -1045,28 +864,32 @@ private fun VideoPlayer(
 
     DisposableEffect(activity, exoPlayer) {
         val window = activity?.window
-        val originalBrightness =
-            window?.attributes?.screenBrightness ?: -1f
-
+        val originalBrightness = window?.attributes?.screenBrightness ?: -1f
         val controller = window?.let {
             WindowInsetsControllerCompat(it, it.decorView)
         }
 
         controller?.systemBarsBehavior =
-            WindowInsetsControllerCompat
-                .BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller?.hide(WindowInsetsCompat.Type.systemBars())
 
         onDispose {
+            try {
+                textureView?.let { view ->
+                    exoPlayer.clearVideoTextureView(view)
+                }
+                textureView = null
+                exoPlayer.release()
+            } catch (_: Exception) {
+                // Player may already be released.
+            }
+
             window?.let {
                 val params = it.attributes
                 params.screenBrightness = originalBrightness
                 it.attributes = params
             }
-
             controller?.show(WindowInsetsCompat.Type.systemBars())
-            exoPlayer.release()
         }
     }
 
@@ -1076,26 +899,17 @@ private fun VideoPlayer(
     }
 
     BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
+        Modifier.fillMaxSize().background(Color.Black)
     ) {
-        val screenWidthPx = with(LocalDensity.current) {
-            maxWidth.toPx()
-        }
-
-        val screenHeightPx = with(LocalDensity.current) {
-            maxHeight.toPx()
-        }
+        val screenWidthPx = with(LocalDensity.current) { maxWidth.toPx() }
+        val screenHeightPx = with(LocalDensity.current) { maxHeight.toPx() }
 
         val rotationFit = if (rotationDegrees % 180 != 0) {
             min(
                 screenWidthPx / screenHeightPx,
                 screenHeightPx / screenWidthPx
             )
-        } else {
-            1f
-        }
+        } else 1f
 
         AndroidView(
             factory = { viewContext ->
@@ -1107,219 +921,238 @@ private fun VideoPlayer(
             },
             update = { view ->
                 if (textureView !== view) {
+                    textureView?.let { old ->
+                        exoPlayer.clearVideoTextureView(old)
+                    }
                     textureView = view
                     exoPlayer.setVideoTextureView(view)
+                }
+            },
+            onRelease = { view ->
+                if (textureView === view) {
+                    exoPlayer.clearVideoTextureView(view)
+                    textureView = null
                 }
             },
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
                     rotationZ = rotationDegrees.toFloat()
-                    val finalScale = zoom * rotationFit
-                    scaleX = finalScale
-                    scaleY = finalScale
+                    val scale = zoom * rotationFit
+                    scaleX = scale
+                    scaleY = scale
                     translationX = panX
                     translationY = panY
                 }
         )
 
-        // Gesture overlay
         Box(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
-                .pointerInput(zoom) {
-                    detectTransformGestures { _, pan, gestureZoom, _ ->
+                .pointerInput(zoom, rotationDegrees) {
+                    var lastTapTime = 0L
+                    var horizontalStart = 0f
+                    var verticalStart = 0f
+                    var startPosition = 0L
+                    var startBrightness = 0.5f
+                    var startVolume = 1f
+                    var dragMode = ""
+
+                    detectTransformGestures { centroid, pan, gestureZoom, _ ->
                         controlsVisible = true
 
-                        if (zoom > 1f || gestureZoom > 1f) {
-                            val newZoom = (zoom * gestureZoom)
-                                .coerceIn(1f, 5f)
-
+                        if (gestureZoom != 1f) {
+                            val newZoom = (zoom * gestureZoom).coerceIn(1f, 5f)
                             zoom = newZoom
 
                             if (newZoom <= 1.01f) {
                                 zoom = 1f
                                 panX = 0f
                                 panY = 0f
-                            } else {
-                                val maxX =
-                                    size.width * (newZoom - 1f) / 2f
-                                val maxY =
-                                    size.height * (newZoom - 1f) / 2f
-
-                                panX = (panX + pan.x)
-                                    .coerceIn(-maxX, maxX)
-
-                                panY = (panY + pan.y)
-                                    .coerceIn(-maxY, maxY)
                             }
+                        }
+
+                        if (zoom > 1f && gestureZoom == 1f) {
+                            val maxX = size.width * (zoom - 1f) / 2f
+                            val maxY = size.height * (zoom - 1f) / 2f
+                            panX = (panX + pan.x).coerceIn(-maxX, maxX)
+                            panY = (panY + pan.y).coerceIn(-maxY, maxY)
                         }
                     }
                 }
-                .pointerInput(exoPlayer) {
-                    detectTapGestures(
-                        onTap = {
-                            controlsVisible = !controlsVisible
-                        },
-                        onDoubleTap = {
-                            if (exoPlayer.isPlaying) {
-                                exoPlayer.pause()
-                            } else {
-                                exoPlayer.play()
-                            }
-                            controlsVisible = true
-                        }
-                    )
-                }
-                .pointerInput(exoPlayer, density) {
-                    var startPosition = 0L
-                    var dragDistancePx = 0f
+                .pointerInput(exoPlayer, zoom, activity) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val down = awaitPointerEvent()
+                            val pressed = down.changes.firstOrNull { it.pressed }
+                                ?: continue
+                            val start = pressed.position
+                            val startTime = System.currentTimeMillis()
+                            val startX = start.x
+                            val startY = start.y
+                            var lastX = startX
+                            var lastY = startY
+                            var moved = false
+                            var finished = false
 
-                    detectHorizontalDragGestures(
-                        onDragStart = {
-                            startPosition = exoPlayer.currentPosition
-                            dragDistancePx = 0f
-                            controlsVisible = true
-                        },
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            dragDistancePx += dragAmount
+                            while (!finished) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull()
+                                    ?: continue
 
-                            val dragDp = dragDistancePx / density
-                            val timeChange = (dragDp * 100L).toLong()
-
-                            var targetPosition =
-                                (startPosition + timeChange)
-                                    .coerceAtLeast(0L)
-
-                            val videoDuration = exoPlayer.duration
-                            if (videoDuration > 0L) {
-                                targetPosition =
-                                    targetPosition.coerceAtMost(videoDuration)
-                            }
-
-                            exoPlayer.seekTo(targetPosition)
-                            currentPosition = targetPosition
-                            sliderPosition = targetPosition.toFloat()
-                        }
-                    )
-                }
-                .pointerInput(exoPlayer, density, activity) {
-                    var brightnessSide = false
-                    var startBrightness = 0.5f
-                    var startVolume = 1f
-                    var dragDistance = 0f
-
-                    detectVerticalDragGestures(
-                        onDragStart = { offset ->
-                            brightnessSide = offset.x < size.width / 2f
-                            dragDistance = 0f
-
-                            if (brightnessSide) {
-                                val currentBrightness =
-                                    activity?.window?.attributes
-                                        ?.screenBrightness ?: -1f
-
-                                startBrightness =
-                                    if (currentBrightness < 0f) {
-                                        0.5f
-                                    } else {
-                                        currentBrightness
-                                    }
-
-                                indicatorType = "brightness"
-                                indicatorLevel = startBrightness
-                            } else {
-                                startVolume =
-                                    exoPlayer.volume.coerceIn(0f, 1f)
-
-                                indicatorType = "volume"
-                                indicatorLevel = startVolume
-                            }
-
-                            indicatorVisible = true
-                            indicatorResetKey++
-                        },
-                        onVerticalDrag = { change, dragAmount ->
-                            change.consume()
-                            dragDistance += dragAmount
-
-                            val adjustment =
-                                dragDistance / (size.height * 0.60f)
-
-                            if (brightnessSide) {
-                                val newBrightness =
-                                    (startBrightness - adjustment)
-                                        .coerceIn(0.01f, 1f)
-
-                                activity?.window?.let { window ->
-                                    val params = window.attributes
-                                    params.screenBrightness = newBrightness
-                                    window.attributes = params
+                                if (!change.pressed) {
+                                    finished = true
+                                    continue
                                 }
 
-                                indicatorLevel = newBrightness
-                            } else {
-                                val newVolume =
-                                    (startVolume - adjustment)
-                                        .coerceIn(0f, 1f)
+                                val dx = change.position.x - lastX
+                                val dy = change.position.y - lastY
+                                lastX = change.position.x
+                                lastY = change.position.y
 
-                                exoPlayer.volume = newVolume
-                                indicatorLevel = newVolume
+                                if (abs(change.position.x - startX) > 12f ||
+                                    abs(change.position.y - startY) > 12f
+                                ) {
+                                    moved = true
+                                }
+
+                                if (moved && zoom <= 1.01f) {
+                                    if (dragMode.isEmpty()) {
+                                        dragMode = if (
+                                            abs(change.position.x - startX) >
+                                            abs(change.position.y - startY)
+                                        ) "horizontal" else "vertical"
+
+                                        startPosition = exoPlayer.currentPosition
+
+                                        if (dragMode == "vertical") {
+                                            if (startX < size.width / 2f) {
+                                                val b = activity?.window?.attributes
+                                                    ?.screenBrightness ?: -1f
+                                                startBrightness = if (b < 0f) 0.5f else b
+                                                indicatorType = "brightness"
+                                                indicatorLevel = startBrightness
+                                            } else {
+                                                startVolume = exoPlayer.volume
+                                                indicatorType = "volume"
+                                                indicatorLevel = startVolume
+                                            }
+                                            indicatorVisible = true
+                                            indicatorResetKey++
+                                        }
+                                    }
+
+                                    if (dragMode == "horizontal") {
+                                        val changeMs = ((change.position.x - startX) /
+                                            density * 100L).toLong()
+                                        val target = (startPosition + changeMs)
+                                            .coerceIn(
+                                                0L,
+                                                exoPlayer.duration.coerceAtLeast(0L)
+                                            )
+                                        exoPlayer.seekTo(target)
+                                        currentPosition = target
+                                        sliderPosition = target.toFloat()
+                                    } else if (dragMode == "vertical") {
+                                        val adjustment = (change.position.y - startY) /
+                                            (size.height * 0.60f)
+
+                                        if (indicatorType == "brightness") {
+                                            val value = (startBrightness - adjustment)
+                                                .coerceIn(0.01f, 1f)
+                                            activity?.window?.let { window ->
+                                                val params = window.attributes
+                                                params.screenBrightness = value
+                                                window.attributes = params
+                                            }
+                                            indicatorLevel = value
+                                        } else {
+                                            val value = (startVolume - adjustment)
+                                                .coerceIn(0f, 1f)
+                                            exoPlayer.volume = value
+                                            indicatorLevel = value
+                                        }
+                                        indicatorVisible = true
+                                        indicatorResetKey++
+                                    }
+                                }
+
+                                change.consume()
                             }
 
-                            indicatorVisible = true
-                            indicatorResetKey++
-                        },
-                        onDragEnd = {
-                            indicatorVisible = true
-                            indicatorResetKey++
+                            if (!moved) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastTapTime < 300) {
+                                    if (exoPlayer.isPlaying) exoPlayer.pause()
+                                    else exoPlayer.play()
+                                    controlsVisible = true
+                                    lastTapTime = 0L
+                                } else {
+                                    controlsVisible = !controlsVisible
+                                    lastTapTime = now
+                                }
+                            }
+
+                            if (dragMode == "vertical") {
+                                indicatorVisible = true
+                                indicatorResetKey++
+                            }
+                            dragMode = ""
                         }
-                    )
+                    }
                 }
         )
 
+        if (playerError != null) {
+            Column(
+                Modifier.align(Alignment.Center).padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "Cannot play this video",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    playerError ?: "",
+                    color = Color.LightGray,
+                    fontSize = 12.sp
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = {
+                    playerError = null
+                    exoPlayer.prepare()
+                    exoPlayer.play()
+                }) {
+                    Text("Retry")
+                }
+            }
+        }
+
         if (controlsVisible) {
             Box(Modifier.fillMaxSize()) {
-
-                // Rotate button
                 Row(
-                    modifier = Modifier
+                    Modifier
                         .align(Alignment.CenterStart)
                         .padding(start = 16.dp)
                         .clip(RoundedCornerShape(30.dp))
                         .background(Color(0x99000000))
                         .clickable {
-                            rotationDegrees =
-                                (rotationDegrees + 90) % 360
+                            rotationDegrees = (rotationDegrees + 90) % 360
                             controlsVisible = true
                         }
-                        .padding(
-                            horizontal = 13.dp,
-                            vertical = 10.dp
-                        ),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement =
-                        Arrangement.spacedBy(6.dp)
+                        .padding(horizontal = 13.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        "⟳",
-                        color = Color.White,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Text(
-                        "Rotate",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Text("⟳", color = Color.White, fontSize = 24.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Rotate", color = Color.White, fontSize = 12.sp)
                 }
 
-                // Reset / Fit
                 Row(
-                    modifier = Modifier
+                    Modifier
                         .align(Alignment.TopEnd)
                         .padding(16.dp)
                         .clip(RoundedCornerShape(30.dp))
@@ -1328,30 +1161,14 @@ private fun VideoPlayer(
                             resetVideoView()
                             controlsVisible = true
                         }
-                        .padding(
-                            horizontal = 13.dp,
-                            vertical = 10.dp
-                        ),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement =
-                        Arrangement.spacedBy(6.dp)
+                        .padding(horizontal = 13.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        "⤢",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Text(
-                        "Reset / Fit",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Text("⤢", color = Color.White, fontSize = 20.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Reset / Fit", color = Color.White, fontSize = 12.sp)
                 }
 
-                // Center Play / Pause
                 Text(
                     if (isPlaying) "Ⅱ" else "▶",
                     color = Color.White,
@@ -1361,52 +1178,30 @@ private fun VideoPlayer(
                         .clip(RoundedCornerShape(50))
                         .background(Color(0x55000000))
                         .clickable {
-                            if (isPlaying) {
-                                exoPlayer.pause()
-                            } else {
-                                exoPlayer.play()
-                            }
+                            if (isPlaying) exoPlayer.pause() else exoPlayer.play()
                             controlsVisible = true
                         }
                         .padding(18.dp)
                 )
 
-                // Bottom progress and time
                 Column(
-                    modifier = Modifier
+                    Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .background(Color(0x88000000))
-                        .padding(
-                            start = 14.dp,
-                            end = 14.dp,
-                            top = 8.dp,
-                            bottom = 12.dp
-                        )
+                        .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 12.dp)
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            formatTime(
-                                if (isScrubbing) {
-                                    sliderPosition.toLong()
-                                } else {
-                                    currentPosition
-                                }
-                            ),
+                            formatTime(if (isScrubbing) sliderPosition.toLong() else currentPosition),
                             color = Color.White,
                             fontSize = 11.sp
                         )
-
                         Spacer(Modifier.weight(1f))
-
-                        Text(
-                            formatTime(duration),
-                            color = Color.White,
-                            fontSize = 11.sp
-                        )
+                        Text(formatTime(duration), color = Color.White, fontSize = 11.sp)
                     }
 
                     Slider(
@@ -1414,9 +1209,9 @@ private fun VideoPlayer(
                             0f,
                             duration.coerceAtLeast(1L).toFloat()
                         ),
-                        onValueChange = { value ->
+                        onValueChange = {
                             isScrubbing = true
-                            sliderPosition = value
+                            sliderPosition = it
                             controlsVisible = true
                         },
                         onValueChangeFinished = {
@@ -1424,11 +1219,8 @@ private fun VideoPlayer(
                             currentPosition = sliderPosition.toLong()
                             isScrubbing = false
                         },
-                        valueRange =
-                            0f..duration.coerceAtLeast(1L).toFloat(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(30.dp),
+                        valueRange = 0f..duration.coerceAtLeast(1L).toFloat(),
+                        modifier = Modifier.fillMaxWidth().height(30.dp),
                         colors = SliderDefaults.colors(
                             thumbColor = Color.White,
                             activeTrackColor = Color.White,
@@ -1439,82 +1231,36 @@ private fun VideoPlayer(
             }
         }
 
-        // Brightness indicator
-        if (indicatorVisible && indicatorType == "brightness") {
+        if (indicatorVisible && indicatorType.isNotEmpty()) {
+            val left = indicatorType == "brightness"
+
             Column(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 18.dp),
+                Modifier
+                    .align(if (left) Alignment.CenterStart else Alignment.CenterEnd)
+                    .padding(horizontal = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
                 Text(
-                    "☀",
+                    if (left) "☀" else "◖))",
                     color = Color.White,
                     fontSize = 18.sp
                 )
-
                 Box(
-                    modifier = Modifier
+                    Modifier
                         .width(5.dp)
                         .height(68.dp)
                         .clip(RoundedCornerShape(50))
                         .background(Color(0x66FFFFFF))
                 ) {
                     Box(
-                        modifier = Modifier
+                        Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .fillMaxHeight(
-                                indicatorLevel.coerceIn(0.01f, 1f)
-                            )
+                            .fillMaxHeight(indicatorLevel.coerceIn(0.01f, 1f))
                             .background(Color.White)
                     )
                 }
-
-                Text(
-                    "${(indicatorLevel * 100).toInt()}%",
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
-
-        // Volume indicator
-        if (indicatorVisible && indicatorType == "volume") {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                Text(
-                    "◖))",
-                    color = Color.White,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Box(
-                    modifier = Modifier
-                        .width(5.dp)
-                        .height(68.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(Color(0x66FFFFFF))
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .fillMaxHeight(
-                                indicatorLevel.coerceIn(0.01f, 1f)
-                            )
-                            .background(Color.White)
-                    )
-                }
-
                 Text(
                     "${(indicatorLevel * 100).toInt()}%",
                     color = Color.White,
