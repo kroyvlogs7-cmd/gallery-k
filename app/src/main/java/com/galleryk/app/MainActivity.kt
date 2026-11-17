@@ -1,4 +1,3 @@
-
 package com.galleryk.app
 
 import android.Manifest
@@ -6,10 +5,12 @@ import android.app.Activity
 import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -23,6 +24,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -37,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -44,18 +47,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.math.min
 
 data class GalleryMedia(
     val uri: Uri,
@@ -278,8 +280,9 @@ fun GalleryKApp() {
                     "Could not load media: ${e.message}",
                     Toast.LENGTH_LONG
                 ).show()
+            } finally {
+                loading = false
             }
-            loading = false
         }
     }
 
@@ -309,7 +312,7 @@ fun GalleryKApp() {
                         request.intentSender
                     ).build()
                 )
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 Toast.makeText(
                     context,
                     "Could not start delete confirmation",
@@ -405,7 +408,9 @@ fun GalleryKApp() {
                                         ) {
                                             emptySet()
                                         } else {
-                                            displayedMedia.map { it.uri }.toSet()
+                                            displayedMedia.map {
+                                                it.uri
+                                            }.toSet()
                                         }
                                 }
                             ) {
@@ -870,6 +875,7 @@ private fun VideoPlayer(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current.density
 
     val activity = remember(context) {
         var current = context
@@ -882,8 +888,6 @@ private fun VideoPlayer(
         current as? Activity
     }
 
-    val density = LocalDensity.current.density
-
     val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(uri))
@@ -891,6 +895,29 @@ private fun VideoPlayer(
             playWhenReady = true
             volume = 1f
         }
+    }
+
+    var textureView by remember {
+        mutableStateOf<TextureView?>(null)
+    }
+
+    var videoWidth by remember { mutableIntStateOf(0) }
+    var videoHeight by remember { mutableIntStateOf(0) }
+
+    var rotationDegrees by remember(uri) {
+        mutableIntStateOf(0)
+    }
+
+    var zoom by remember(uri) {
+        mutableFloatStateOf(1f)
+    }
+
+    var panX by remember(uri) {
+        mutableFloatStateOf(0f)
+    }
+
+    var panY by remember(uri) {
+        mutableFloatStateOf(0f)
     }
 
     var indicatorType by remember { mutableStateOf("") }
@@ -905,9 +932,24 @@ private fun VideoPlayer(
     var sliderPosition by remember { mutableFloatStateOf(0f) }
     var isPlaying by remember { mutableStateOf(true) }
 
-    // NEW: Video rotation state
-    var rotationDegrees by remember(uri) {
-        mutableIntStateOf(0)
+    fun resetVideoView() {
+        rotationDegrees = 0
+        zoom = 1f
+        panX = 0f
+        panY = 0f
+    }
+
+    fun formatTime(ms: Long): String {
+        val totalSeconds = (ms / 1000).coerceAtLeast(0L)
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+
+        return if (hours > 0) {
+            String.format("%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format("%02d:%02d", minutes, seconds)
+        }
     }
 
     DisposableEffect(exoPlayer) {
@@ -920,12 +962,56 @@ private fun VideoPlayer(
             override fun onPlaybackStateChanged(state: Int) {
                 duration = exoPlayer.duration.coerceAtLeast(0L)
             }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                videoWidth = videoSize.width
+                videoHeight = videoSize.height
+            }
         }
 
         exoPlayer.addListener(listener)
 
         onDispose {
             exoPlayer.removeListener(listener)
+        }
+    }
+
+    LaunchedEffect(textureView, videoWidth, videoHeight) {
+        val view = textureView ?: return@LaunchedEffect
+
+        if (videoWidth > 0 && videoHeight > 0) {
+            view.post {
+                val viewWidth = view.width.toFloat()
+                val viewHeight = view.height.toFloat()
+
+                if (viewWidth > 0f && viewHeight > 0f) {
+                    val videoRatio =
+                        videoWidth.toFloat() / videoHeight.toFloat()
+                    val viewRatio = viewWidth / viewHeight
+
+                    val scaleX: Float
+                    val scaleY: Float
+
+                    if (videoRatio > viewRatio) {
+                        scaleX = 1f
+                        scaleY = viewRatio / videoRatio
+                    } else {
+                        scaleX = videoRatio / viewRatio
+                        scaleY = 1f
+                    }
+
+                    val matrix = Matrix().apply {
+                        setScale(
+                            scaleX,
+                            scaleY,
+                            viewWidth / 2f,
+                            viewHeight / 2f
+                        )
+                    }
+
+                    view.setTransform(matrix)
+                }
+            }
         }
     }
 
@@ -967,7 +1053,8 @@ private fun VideoPlayer(
         }
 
         controller?.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            WindowInsetsControllerCompat
+                .BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         controller?.hide(WindowInsetsCompat.Type.systemBars())
 
@@ -983,19 +1070,9 @@ private fun VideoPlayer(
         }
     }
 
-    BackHandler { onBack() }
-
-    fun formatTime(ms: Long): String {
-        val totalSeconds = (ms / 1000).coerceAtLeast(0L)
-        val hours = totalSeconds / 3600
-        val minutes = (totalSeconds % 3600) / 60
-        val seconds = totalSeconds % 60
-
-        return if (hours > 0) {
-            String.format("%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format("%02d:%02d", minutes, seconds)
-        }
+    BackHandler {
+        resetVideoView()
+        onBack()
     }
 
     BoxWithConstraints(
@@ -1003,46 +1080,82 @@ private fun VideoPlayer(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        val screenWidth = maxWidth
-        val screenHeight = maxHeight
+        val screenWidthPx = with(LocalDensity.current) {
+            maxWidth.toPx()
+        }
 
-        // Video view swaps its dimensions when rotated
+        val screenHeightPx = with(LocalDensity.current) {
+            maxHeight.toPx()
+        }
+
+        val rotationFit = if (rotationDegrees % 180 != 0) {
+            min(
+                screenWidthPx / screenHeightPx,
+                screenHeightPx / screenWidthPx
+            )
+        } else {
+            1f
+        }
+
         AndroidView(
             factory = { viewContext ->
-                PlayerView(viewContext).apply {
-                    player = exoPlayer
-                    useController = false
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    setShowBuffering(
-                        PlayerView.SHOW_BUFFERING_WHEN_PLAYING
-                    )
+                TextureView(viewContext).apply {
+                    setBackgroundColor(android.graphics.Color.BLACK)
+                    textureView = this
+                    exoPlayer.setVideoTextureView(this)
                 }
             },
-            update = { playerView ->
-                playerView.player = exoPlayer
-                playerView.useController = false
-                playerView.resizeMode =
-                    AspectRatioFrameLayout.RESIZE_MODE_FIT
+            update = { view ->
+                if (textureView !== view) {
+                    textureView = view
+                    exoPlayer.setVideoTextureView(view)
+                }
             },
-            modifier = if (rotationDegrees % 180 != 0) {
-                Modifier
-                    .align(Alignment.Center)
-                    .requiredSize(
-                        width = screenHeight,
-                        height = screenWidth
-                    )
-                    .graphicsLayer {
-                        rotationZ = rotationDegrees.toFloat()
-                    }
-            } else {
-                Modifier.fillMaxSize()
-            }
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    rotationZ = rotationDegrees.toFloat()
+                    val finalScale = zoom * rotationFit
+                    scaleX = finalScale
+                    scaleY = finalScale
+                    translationX = panX
+                    translationY = panY
+                }
         )
 
-        // Touch gestures
+        // Gesture overlay
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .pointerInput(zoom) {
+                    detectTransformGestures { _, pan, gestureZoom, _ ->
+                        controlsVisible = true
+
+                        if (zoom > 1f || gestureZoom > 1f) {
+                            val newZoom = (zoom * gestureZoom)
+                                .coerceIn(1f, 5f)
+
+                            zoom = newZoom
+
+                            if (newZoom <= 1.01f) {
+                                zoom = 1f
+                                panX = 0f
+                                panY = 0f
+                            } else {
+                                val maxX =
+                                    size.width * (newZoom - 1f) / 2f
+                                val maxY =
+                                    size.height * (newZoom - 1f) / 2f
+
+                                panX = (panX + pan.x)
+                                    .coerceIn(-maxX, maxX)
+
+                                panY = (panY + pan.y)
+                                    .coerceIn(-maxY, maxY)
+                            }
+                        }
+                    }
+                }
                 .pointerInput(exoPlayer) {
                     detectTapGestures(
                         onTap = {
@@ -1166,11 +1279,79 @@ private fun VideoPlayer(
                 }
         )
 
-        // Playback and rotate controls
         if (controlsVisible) {
             Box(Modifier.fillMaxSize()) {
 
-                // Center Play/Pause
+                // Rotate button
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 16.dp)
+                        .clip(RoundedCornerShape(30.dp))
+                        .background(Color(0x99000000))
+                        .clickable {
+                            rotationDegrees =
+                                (rotationDegrees + 90) % 360
+                            controlsVisible = true
+                        }
+                        .padding(
+                            horizontal = 13.dp,
+                            vertical = 10.dp
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement =
+                        Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        "⟳",
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        "Rotate",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                // Reset / Fit
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                        .clip(RoundedCornerShape(30.dp))
+                        .background(Color(0x99000000))
+                        .clickable {
+                            resetVideoView()
+                            controlsVisible = true
+                        }
+                        .padding(
+                            horizontal = 13.dp,
+                            vertical = 10.dp
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement =
+                        Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        "⤢",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        "Reset / Fit",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                // Center Play / Pause
                 Text(
                     if (isPlaying) "Ⅱ" else "▶",
                     color = Color.White,
@@ -1190,41 +1371,7 @@ private fun VideoPlayer(
                         .padding(18.dp)
                 )
 
-                // NEW: Rotate button at top-right
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(18.dp)
-                        .clip(RoundedCornerShape(30.dp))
-                        .background(Color(0x99000000))
-                        .clickable {
-                            rotationDegrees =
-                                (rotationDegrees + 90) % 360
-                            controlsVisible = true
-                        }
-                        .padding(
-                            horizontal = 15.dp,
-                            vertical = 10.dp
-                        ),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)
-                ) {
-                    Text(
-                        "⟳",
-                        color = Color.White,
-                        fontSize = 25.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Text(
-                        "Rotate",
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                // Bottom progress and time controls
+                // Bottom progress and time
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
