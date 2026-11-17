@@ -53,6 +53,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 data class GalleryMedia(
@@ -977,6 +978,29 @@ private fun VideoPlayer(
         }
     }
 
+    var indicatorType by remember {
+        mutableStateOf("")
+    }
+
+    var indicatorLevel by remember {
+        mutableFloatStateOf(0f)
+    }
+
+    var indicatorVisible by remember {
+        mutableStateOf(false)
+    }
+
+    var indicatorResetKey by remember {
+        mutableIntStateOf(0)
+    }
+
+    LaunchedEffect(indicatorResetKey) {
+        if (indicatorVisible) {
+            delay(1500)
+            indicatorVisible = false
+        }
+    }
+
     DisposableEffect(activity, exoPlayer) {
         val window = activity?.window
 
@@ -1052,7 +1076,7 @@ private fun VideoPlayer(
                     )
                 }
 
-                // Horizontal swipe: Live Forward / Backward
+                // Horizontal swipe: Forward / Backward
                 .pointerInput(exoPlayer, density) {
                     var startPosition = 0L
                     var dragDistancePx = 0f
@@ -1110,18 +1134,36 @@ private fun VideoPlayer(
                                     } else {
                                         currentBrightness
                                     }
+
+                                indicatorType = "brightness"
+                                indicatorLevel = startBrightness
                             } else {
                                 startVolume =
                                     audioManager.getStreamVolume(
                                         AudioManager.STREAM_MUSIC
                                     )
+
+                                val maxVolume =
+                                    audioManager.getStreamMaxVolume(
+                                        AudioManager.STREAM_MUSIC
+                                    )
+
+                                indicatorType = "volume"
+                                indicatorLevel =
+                                    if (maxVolume > 0) {
+                                        startVolume.toFloat() / maxVolume
+                                    } else {
+                                        0f
+                                    }
                             }
+
+                            indicatorVisible = true
+                            indicatorResetKey++
                         },
                         onVerticalDrag = { change, dragAmount ->
                             change.consume()
                             dragDistance += dragAmount
 
-                            // Full screen-height swipe = full adjustment
                             val adjustment =
                                 dragDistance / size.height.toFloat()
 
@@ -1136,6 +1178,8 @@ private fun VideoPlayer(
                                         newBrightness
                                     window.attributes = params
                                 }
+
+                                indicatorLevel = newBrightness
                             } else {
                                 val maxVolume =
                                     audioManager.getStreamMaxVolume(
@@ -1154,10 +1198,106 @@ private fun VideoPlayer(
                                     newVolume,
                                     0
                                 )
+
+                                indicatorLevel =
+                                    if (maxVolume > 0) {
+                                        newVolume.toFloat() / maxVolume
+                                    } else {
+                                        0f
+                                    }
                             }
+
+                            indicatorVisible = true
+                            indicatorResetKey++
+                        },
+                        onDragEnd = {
+                            indicatorVisible = true
+                            indicatorResetKey++
                         }
                     )
                 }
         )
+
+        // Brightness indicator
+        if (indicatorVisible && indicatorType == "brightness") {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 22.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xCC222222))
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "☀",
+                    color = Color.White,
+                    fontSize = 28.sp
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                LinearProgressIndicator(
+                    progress = {
+                        indicatorLevel.coerceIn(0f, 1f)
+                    },
+                    modifier = Modifier
+                        .width(85.dp)
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                    color = Color.White,
+                    trackColor = Color.DarkGray
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                Text(
+                    "${(indicatorLevel * 100).toInt()}%",
+                    color = Color.White,
+                    fontSize = 12.sp
+                )
+            }
+        }
+
+        // Volume indicator
+        if (indicatorVisible && indicatorType == "volume") {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 22.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xCC222222))
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "🔊",
+                    color = Color.White,
+                    fontSize = 28.sp
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                LinearProgressIndicator(
+                    progress = {
+                        indicatorLevel.coerceIn(0f, 1f)
+                    },
+                    modifier = Modifier
+                        .width(85.dp)
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                    color = Color.White,
+                    trackColor = Color.DarkGray
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                Text(
+                    "${(indicatorLevel * 100).toInt()}%",
+                    color = Color.White,
+                    fontSize = 12.sp
+                )
+            }
+        }
     }
 }
