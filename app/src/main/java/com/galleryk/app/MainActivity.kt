@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -869,6 +870,7 @@ private fun VideoPlayer(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+
     val activity = remember(context) {
         var current = context
         while (
@@ -879,6 +881,7 @@ private fun VideoPlayer(
         }
         current as? Activity
     }
+
     val density = LocalDensity.current.density
 
     val exoPlayer = remember(uri) {
@@ -901,6 +904,11 @@ private fun VideoPlayer(
     var isScrubbing by remember { mutableStateOf(false) }
     var sliderPosition by remember { mutableFloatStateOf(0f) }
     var isPlaying by remember { mutableStateOf(true) }
+
+    // NEW: Video rotation state
+    var rotationDegrees by remember(uri) {
+        mutableIntStateOf(0)
+    }
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
@@ -990,11 +998,15 @@ private fun VideoPlayer(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        val screenWidth = maxWidth
+        val screenHeight = maxHeight
+
+        // Video view swaps its dimensions when rotated
         AndroidView(
             factory = { viewContext ->
                 PlayerView(viewContext).apply {
@@ -1012,9 +1024,22 @@ private fun VideoPlayer(
                 playerView.resizeMode =
                     AspectRatioFrameLayout.RESIZE_MODE_FIT
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = if (rotationDegrees % 180 != 0) {
+                Modifier
+                    .align(Alignment.Center)
+                    .requiredSize(
+                        width = screenHeight,
+                        height = screenWidth
+                    )
+                    .graphicsLayer {
+                        rotationZ = rotationDegrees.toFloat()
+                    }
+            } else {
+                Modifier.fillMaxSize()
+            }
         )
 
+        // Touch gestures
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1141,8 +1166,11 @@ private fun VideoPlayer(
                 }
         )
 
+        // Playback and rotate controls
         if (controlsVisible) {
             Box(Modifier.fillMaxSize()) {
+
+                // Center Play/Pause
                 Text(
                     if (isPlaying) "Ⅱ" else "▶",
                     color = Color.White,
@@ -1162,6 +1190,41 @@ private fun VideoPlayer(
                         .padding(18.dp)
                 )
 
+                // NEW: Rotate button at top-right
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(18.dp)
+                        .clip(RoundedCornerShape(30.dp))
+                        .background(Color(0x99000000))
+                        .clickable {
+                            rotationDegrees =
+                                (rotationDegrees + 90) % 360
+                            controlsVisible = true
+                        }
+                        .padding(
+                            horizontal = 15.dp,
+                            vertical = 10.dp
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Text(
+                        "⟳",
+                        color = Color.White,
+                        fontSize = 25.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        "Rotate",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                // Bottom progress and time controls
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1229,6 +1292,7 @@ private fun VideoPlayer(
             }
         }
 
+        // Brightness indicator
         if (indicatorVisible && indicatorType == "brightness") {
             Column(
                 modifier = Modifier
@@ -1270,6 +1334,7 @@ private fun VideoPlayer(
             }
         }
 
+        // Volume indicator
         if (indicatorVisible && indicatorType == "volume") {
             Column(
                 modifier = Modifier
