@@ -40,8 +40,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -913,6 +916,7 @@ private fun VideoPlayer(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val activity = context as? Activity
 
     val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
@@ -922,10 +926,26 @@ private fun VideoPlayer(
         }
     }
 
-    DisposableEffect(exoPlayer) {
+    DisposableEffect(activity, exoPlayer) {
+        val window = activity?.window
+
+        val controller = window?.let {
+            WindowInsetsControllerCompat(it, it.decorView)
+        }
+
+        controller?.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
+        controller?.hide(WindowInsetsCompat.Type.systemBars())
+
         onDispose {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
             exoPlayer.release()
         }
+    }
+
+    BackHandler {
+        onBack()
     }
 
     Box(
@@ -938,6 +958,10 @@ private fun VideoPlayer(
                 PlayerView(viewContext).apply {
                     player = exoPlayer
                     useController = true
+                    controllerShowTimeoutMs = 2500
+                    resizeMode =
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+
                     setShowBuffering(
                         PlayerView.SHOW_BUFFERING_WHEN_PLAYING
                     )
@@ -945,6 +969,8 @@ private fun VideoPlayer(
             },
             update = { playerView ->
                 playerView.player = exoPlayer
+                playerView.resizeMode =
+                    AspectRatioFrameLayout.RESIZE_MODE_FIT
             },
             modifier = Modifier.fillMaxSize()
         )
