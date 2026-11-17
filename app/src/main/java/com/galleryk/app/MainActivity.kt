@@ -9,9 +9,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.SystemClock
 import android.provider.MediaStore
-import android.media.AudioManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -35,10 +33,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.input.pointer.awaitEachGesture
-import androidx.compose.ui.input.pointer.awaitFirstDown
-import androidx.compose.ui.input.pointer.awaitPointerEvent
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -54,7 +48,6 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.sqrt
 
 data class GalleryMedia(
     val uri: Uri,
@@ -89,7 +82,9 @@ private fun requiredPermissions(): Array<String> {
             Manifest.permission.READ_MEDIA_IMAGES,
             Manifest.permission.READ_MEDIA_VIDEO
         )
-        else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        else -> arrayOf(
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        )
     }
 }
 
@@ -114,7 +109,8 @@ private suspend fun loadGallery(
             isVideo: Boolean
         ) {
             val idColumnName = MediaStore.MediaColumns._ID
-            val bucketIdName = MediaStore.Images.ImageColumns.BUCKET_ID
+            val bucketIdName =
+                MediaStore.Images.ImageColumns.BUCKET_ID
             val bucketNameName =
                 MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME
             val dateName = MediaStore.MediaColumns.DATE_ADDED
@@ -144,12 +140,14 @@ private suspend fun loadGallery(
                 "$dateName DESC"
             )?.use { cursor ->
 
-                val idIndex = cursor.getColumnIndexOrThrow(idColumnName)
+                val idIndex =
+                    cursor.getColumnIndexOrThrow(idColumnName)
                 val bucketIdIndex =
                     cursor.getColumnIndexOrThrow(bucketIdName)
                 val bucketNameIndex =
                     cursor.getColumnIndexOrThrow(bucketNameName)
-                val dateIndex = cursor.getColumnIndexOrThrow(dateName)
+                val dateIndex =
+                    cursor.getColumnIndexOrThrow(dateName)
 
                 val durationIndex = if (isVideo) {
                     cursor.getColumnIndexOrThrow(
@@ -159,14 +157,19 @@ private suspend fun loadGallery(
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idIndex)
-                    val uri = ContentUris.withAppendedId(collection, id)
+                    val uri =
+                        ContentUris.withAppendedId(collection, id)
                     val bucketId =
                         cursor.getString(bucketIdIndex) ?: "unknown"
                     val bucketName =
                         cursor.getString(bucketNameIndex) ?: "Other"
                     val dateAdded = cursor.getLong(dateIndex)
                     val duration =
-                        if (isVideo) cursor.getLong(durationIndex) else 0L
+                        if (isVideo) {
+                            cursor.getLong(durationIndex)
+                        } else {
+                            0L
+                        }
 
                     allMedia.add(
                         GalleryMedia(
@@ -186,6 +189,7 @@ private suspend fun loadGallery(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             false
         )
+
         readCollection(
             MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
             true
@@ -215,61 +219,73 @@ fun GalleryKApp() {
     var allMedia by remember {
         mutableStateOf(listOf<GalleryMedia>())
     }
+
     var albums by remember {
         mutableStateOf(listOf<PhotoAlbum>())
     }
+
     var selectedIndex by remember {
         mutableIntStateOf(-1)
     }
+
     var selectedAlbumId by remember {
         mutableStateOf<String?>(null)
     }
+
     var selectedTab by remember {
         mutableStateOf("Photos")
     }
+
     var permissionGranted by remember {
         mutableStateOf(false)
     }
+
     var loading by remember {
         mutableStateOf(false)
     }
+
     var selectionMode by remember {
         mutableStateOf(false)
     }
+
     var selectedUris by remember {
         mutableStateOf(setOf<Uri>())
     }
+
     var refreshKey by remember {
         mutableIntStateOf(0)
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        permissionGranted = hasMediaPermission(context)
-    }
-
-    val deleteLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            Toast.makeText(
-                context,
-                "Selected media deleted",
-                Toast.LENGTH_SHORT
-            ).show()
-        } else {
-            Toast.makeText(
-                context,
-                "Deletion cancelled",
-                Toast.LENGTH_SHORT
-            ).show()
+    val permissionLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) {
+            permissionGranted = hasMediaPermission(context)
         }
 
-        selectedUris = emptySet()
-        selectionMode = false
-        refreshKey++
-    }
+    val deleteLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.StartIntentSenderForResult()
+        ) { result ->
+
+            if (result.resultCode == Activity.RESULT_OK) {
+                Toast.makeText(
+                    context,
+                    "Selected media deleted",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                Toast.makeText(
+                    context,
+                    "Deletion cancelled",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            selectedUris = emptySet()
+            selectionMode = false
+            refreshKey++
+        }
 
     LaunchedEffect(Unit) {
         permissionGranted = hasMediaPermission(context)
@@ -278,6 +294,7 @@ fun GalleryKApp() {
     LaunchedEffect(permissionGranted, refreshKey) {
         if (permissionGranted) {
             loading = true
+
             try {
                 val result = loadGallery(context)
                 allMedia = result.first
@@ -289,6 +306,7 @@ fun GalleryKApp() {
                     Toast.LENGTH_LONG
                 ).show()
             }
+
             loading = false
         }
     }
@@ -346,6 +364,7 @@ fun GalleryKApp() {
                 selectionMode = false
                 selectedUris = emptySet()
             }
+
             selectedIndex >= 0 -> selectedIndex = -1
             selectedAlbumId != null -> selectedAlbumId = null
             else -> selectedTab = "Photos"
@@ -387,18 +406,22 @@ fun GalleryKApp() {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                if (selectionMode)
+                                if (selectionMode) {
                                     "${selectedUris.size} Selected"
-                                else "Gallery K",
+                                } else {
+                                    "Gallery K"
+                                },
                                 color = Color.White,
                                 fontSize = 27.sp,
                                 fontWeight = FontWeight.Bold
                             )
 
                             Text(
-                                if (selectionMode)
+                                if (selectionMode) {
                                     "Select media to manage"
-                                else "Your memories, beautifully organized",
+                                } else {
+                                    "Your memories, beautifully organized"
+                                },
                                 color = Color.Gray,
                                 fontSize = 12.sp
                             )
@@ -424,7 +447,11 @@ fun GalleryKApp() {
                                     if (
                                         selectedUris.size ==
                                         displayedMedia.size
-                                    ) "Deselect All" else "Select All",
+                                    ) {
+                                        "Deselect All"
+                                    } else {
+                                        "Select All"
+                                    },
                                     color = Color.White
                                 )
                             }
@@ -480,10 +507,11 @@ fun GalleryKApp() {
                                             RoundedCornerShape(12.dp)
                                         )
                                         .background(
-                                            if (active)
+                                            if (active) {
                                                 Color(0xFF315C91)
-                                            else
+                                            } else {
                                                 Color(0xFF24262C)
+                                            }
                                         )
                                         .clickable {
                                             selectedTab = tab
@@ -577,10 +605,11 @@ fun GalleryKApp() {
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    if (selectedTab == "Videos")
+                                    if (selectedTab == "Videos") {
                                         "No videos found"
-                                    else
-                                        "No photos found",
+                                    } else {
+                                        "No photos found"
+                                    },
                                     color = Color.White
                                 )
                             }
@@ -589,10 +618,11 @@ fun GalleryKApp() {
                         else -> {
                             Text(
                                 "${displayedMedia.size} ${
-                                    if (selectedTab == "Videos")
+                                    if (selectedTab == "Videos") {
                                         "Videos"
-                                    else
+                                    } else {
                                         "Photos"
+                                    }
                                 }",
                                 color = Color.LightGray,
                                 modifier = Modifier.padding(
@@ -739,10 +769,11 @@ private fun MediaThumbnail(
             Image(
                 bitmap = bitmap!!.asImageBitmap(),
                 contentDescription =
-                    if (media.isVideo)
+                    if (media.isVideo) {
                         "Video thumbnail"
-                    else
-                        "Photo thumbnail",
+                    } else {
+                        "Photo thumbnail"
+                    },
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
@@ -924,11 +955,6 @@ private fun VideoPlayer(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
-    val audioManager = remember {
-        context.getSystemService(
-            android.content.Context.AUDIO_SERVICE
-        ) as AudioManager
-    }
 
     val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
@@ -938,18 +964,12 @@ private fun VideoPlayer(
         }
     }
 
-    val lastTapTime = remember {
-        mutableLongStateOf(0L)
-    }
-
     DisposableEffect(activity, exoPlayer) {
         val window = activity?.window
+
         val controller = window?.let {
             WindowInsetsControllerCompat(it, it.decorView)
         }
-
-        val originalBrightness =
-            window?.attributes?.screenBrightness ?: -1f
 
         controller?.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -957,12 +977,6 @@ private fun VideoPlayer(
         controller?.hide(WindowInsetsCompat.Type.systemBars())
 
         onDispose {
-            if (window != null) {
-                val params = window.attributes
-                params.screenBrightness = originalBrightness
-                window.attributes = params
-            }
-
             controller?.show(WindowInsetsCompat.Type.systemBars())
             exoPlayer.release()
         }
@@ -972,156 +986,18 @@ private fun VideoPlayer(
         onBack()
     }
 
-    BoxWithConstraints(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .pointerInput(exoPlayer, activity) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(
-                        requireUnconsumed = false
-                    )
-
-                    val startPosition = down.position
-                    val startTime = SystemClock.uptimeMillis()
-
-                    var mode = 0
-                    var finished = false
-
-                    val screenWidth = size.width.toFloat()
-                    val screenHeight = size.height.toFloat()
-
-                    val startBrightness =
-                        activity?.window?.attributes?.screenBrightness
-                            ?.takeIf { it >= 0f } ?: 0.5f
-
-                    val startVolume =
-                        audioManager.getStreamVolume(
-                            AudioManager.STREAM_MUSIC
-                        )
-
-                    val maxVolume =
-                        audioManager.getStreamMaxVolume(
-                            AudioManager.STREAM_MUSIC
-                        )
-
-                    val startPositionMs = exoPlayer.currentPosition
-                    val videoDuration = exoPlayer.duration
-
-                    while (!finished) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull {
-                            it.id == down.id
-                        } ?: break
-
-                        if (!change.pressed) {
-                            finished = true
-                        } else {
-                            val dx =
-                                change.position.x - startPosition.x
-                            val dy =
-                                change.position.y - startPosition.y
-
-                            val distance = sqrt(dx * dx + dy * dy)
-
-                            if (
-                                mode == 0 &&
-                                distance > viewConfiguration.touchSlop
-                            ) {
-                                mode = when {
-                                    kotlin.math.abs(dx) >
-                                        kotlin.math.abs(dy) -> 1
-
-                                    startPosition.x < screenWidth / 2f -> 2
-
-                                    else -> 3
-                                }
-                            }
-
-                            when (mode) {
-                                1 -> {
-                                    if (videoDuration > 0) {
-                                        val seekChange =
-                                            (dx / screenWidth) *
-                                                videoDuration
-
-                                        val newPosition =
-                                            (startPositionMs + seekChange)
-                                                .toLong()
-                                                .coerceIn(
-                                                    0L,
-                                                    videoDuration
-                                                )
-
-                                        exoPlayer.seekTo(newPosition)
-                                    }
-                                    change.consume()
-                                }
-
-                                2 -> {
-                                    val brightnessChange =
-                                        -dy / screenHeight
-
-                                    val newBrightness =
-                                        (startBrightness +
-                                            brightnessChange)
-                                            .coerceIn(0.01f, 1f)
-
-                                    activity?.window?.let { window ->
-                                        val params = window.attributes
-                                        params.screenBrightness =
-                                            newBrightness
-                                        window.attributes = params
-                                    }
-
-                                    change.consume()
-                                }
-
-                                3 -> {
-                                    val volumeChange =
-                                        (-dy / screenHeight) * maxVolume
-
-                                    val newVolume =
-                                        (startVolume + volumeChange)
-                                            .toInt()
-                                            .coerceIn(0, maxVolume)
-
-                                    audioManager.setStreamVolume(
-                                        AudioManager.STREAM_MUSIC,
-                                        newVolume,
-                                        0
-                                    )
-
-                                    change.consume()
-                                }
-                            }
-                        }
-                    }
-
-                    if (mode == 0) {
-                        val now = SystemClock.uptimeMillis()
-
-                        if (
-                            now - lastTapTime.longValue <= 300L &&
-                            lastTapTime.longValue != 0L
-                        ) {
-                            exoPlayer.playWhenReady =
-                                !exoPlayer.playWhenReady
-
-                            lastTapTime.longValue = 0L
-                        } else {
-                            lastTapTime.longValue = now
-                        }
-                    }
-                }
-            }
     ) {
         AndroidView(
             factory = { viewContext ->
                 PlayerView(viewContext).apply {
                     player = exoPlayer
 
-                    // Playback controls permanently hidden
+                    // Only change in this step:
+                    // permanently hide all playback controls.
                     useController = false
 
                     resizeMode =
