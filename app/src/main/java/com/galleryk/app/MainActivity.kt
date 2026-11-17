@@ -85,12 +85,10 @@ private fun requiredPermissions(): Array<String> {
             Manifest.permission.READ_MEDIA_VIDEO,
             Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
         )
-
         Build.VERSION.SDK_INT >= 33 -> arrayOf(
             Manifest.permission.READ_MEDIA_IMAGES,
             Manifest.permission.READ_MEDIA_VIDEO
         )
-
         else -> arrayOf(
             Manifest.permission.READ_EXTERNAL_STORAGE
         )
@@ -113,13 +111,9 @@ private suspend fun loadGallery(
 
         val allMedia = mutableListOf<GalleryMedia>()
 
-        fun readCollection(
-            collection: Uri,
-            isVideo: Boolean
-        ) {
+        fun readCollection(collection: Uri, isVideo: Boolean) {
             val idColumnName = MediaStore.MediaColumns._ID
-            val bucketIdName =
-                MediaStore.Images.ImageColumns.BUCKET_ID
+            val bucketIdName = MediaStore.Images.ImageColumns.BUCKET_ID
             val bucketNameName =
                 MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME
             val dateName = MediaStore.MediaColumns.DATE_ADDED
@@ -149,8 +143,7 @@ private suspend fun loadGallery(
                 "$dateName DESC"
             )?.use { cursor ->
 
-                val idIndex =
-                    cursor.getColumnIndexOrThrow(idColumnName)
+                val idIndex = cursor.getColumnIndexOrThrow(idColumnName)
                 val bucketIdIndex =
                     cursor.getColumnIndexOrThrow(bucketIdName)
                 val bucketNameIndex =
@@ -162,14 +155,11 @@ private suspend fun loadGallery(
                     cursor.getColumnIndexOrThrow(
                         MediaStore.Video.VideoColumns.DURATION
                     )
-                } else {
-                    -1
-                }
+                } else -1
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idIndex)
-                    val uri =
-                        ContentUris.withAppendedId(collection, id)
+                    val uri = ContentUris.withAppendedId(collection, id)
                     val bucketId =
                         cursor.getString(bucketIdIndex) ?: "unknown"
                     val bucketName =
@@ -178,18 +168,16 @@ private suspend fun loadGallery(
 
                     val duration = if (isVideo) {
                         cursor.getLong(durationIndex)
-                    } else {
-                        0L
-                    }
+                    } else 0L
 
                     allMedia.add(
                         GalleryMedia(
-                            uri = uri,
-                            isVideo = isVideo,
-                            duration = duration,
-                            albumId = bucketId,
-                            albumName = bucketName,
-                            dateAdded = dateAdded
+                            uri,
+                            isVideo,
+                            duration,
+                            bucketId,
+                            bucketName,
+                            dateAdded
                         )
                     )
                 }
@@ -230,42 +218,17 @@ fun GalleryKApp() {
     var allMedia by remember {
         mutableStateOf(listOf<GalleryMedia>())
     }
-
     var albums by remember {
         mutableStateOf(listOf<PhotoAlbum>())
     }
-
-    var selectedIndex by remember {
-        mutableIntStateOf(-1)
-    }
-
-    var selectedAlbumId by remember {
-        mutableStateOf<String?>(null)
-    }
-
-    var selectedTab by remember {
-        mutableStateOf("Photos")
-    }
-
-    var permissionGranted by remember {
-        mutableStateOf(false)
-    }
-
-    var loading by remember {
-        mutableStateOf(false)
-    }
-
-    var selectionMode by remember {
-        mutableStateOf(false)
-    }
-
-    var selectedUris by remember {
-        mutableStateOf(setOf<Uri>())
-    }
-
-    var refreshKey by remember {
-        mutableIntStateOf(0)
-    }
+    var selectedIndex by remember { mutableIntStateOf(-1) }
+    var selectedAlbumId by remember { mutableStateOf<String?>(null) }
+    var selectedTab by remember { mutableStateOf("Photos") }
+    var permissionGranted by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(false) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedUris by remember { mutableStateOf(setOf<Uri>()) }
+    var refreshKey by remember { mutableIntStateOf(0) }
 
     val permissionLauncher =
         rememberLauncherForActivityResult(
@@ -278,7 +241,6 @@ fun GalleryKApp() {
         rememberLauncherForActivityResult(
             ActivityResultContracts.StartIntentSenderForResult()
         ) { result ->
-
             if (result.resultCode == Activity.RESULT_OK) {
                 Toast.makeText(
                     context,
@@ -305,7 +267,6 @@ fun GalleryKApp() {
     LaunchedEffect(permissionGranted, refreshKey) {
         if (permissionGranted) {
             loading = true
-
             try {
                 val result = loadGallery(context)
                 allMedia = result.first
@@ -317,7 +278,6 @@ fun GalleryKApp() {
                     Toast.LENGTH_LONG
                 ).show()
             }
-
             loading = false
         }
     }
@@ -375,7 +335,6 @@ fun GalleryKApp() {
                 selectionMode = false
                 selectedUris = emptySet()
             }
-
             selectedIndex >= 0 -> selectedIndex = -1
             selectedAlbumId != null -> selectedAlbumId = null
             else -> selectedTab = "Photos"
@@ -408,7 +367,6 @@ fun GalleryKApp() {
                 }
             } else {
                 Column(Modifier.fillMaxSize()) {
-
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -419,9 +377,7 @@ fun GalleryKApp() {
                             Text(
                                 if (selectionMode) {
                                     "${selectedUris.size} Selected"
-                                } else {
-                                    "Gallery K"
-                                },
+                                } else "Gallery K",
                                 color = Color.White,
                                 fontSize = 27.sp,
                                 fontWeight = FontWeight.Bold
@@ -448,9 +404,7 @@ fun GalleryKApp() {
                                         ) {
                                             emptySet()
                                         } else {
-                                            displayedMedia
-                                                .map { it.uri }
-                                                .toSet()
+                                            displayedMedia.map { it.uri }.toSet()
                                         }
                                 }
                             ) {
@@ -458,11 +412,7 @@ fun GalleryKApp() {
                                     if (
                                         selectedUris.size ==
                                         displayedMedia.size
-                                    ) {
-                                        "Deselect All"
-                                    } else {
-                                        "Select All"
-                                    },
+                                    ) "Deselect All" else "Select All",
                                     color = Color.White
                                 )
                             }
@@ -503,26 +453,16 @@ fun GalleryKApp() {
                             horizontalArrangement =
                                 Arrangement.spacedBy(8.dp)
                         ) {
-                            listOf(
-                                "Photos",
-                                "Videos",
-                                "Albums"
-                            ).forEach { tab ->
-
+                            listOf("Photos", "Videos", "Albums").forEach { tab ->
                                 val active = selectedTab == tab
 
                                 Box(
                                     Modifier
                                         .weight(1f)
-                                        .clip(
-                                            RoundedCornerShape(12.dp)
-                                        )
+                                        .clip(RoundedCornerShape(12.dp))
                                         .background(
-                                            if (active) {
-                                                Color(0xFF315C91)
-                                            } else {
-                                                Color(0xFF24262C)
-                                            }
+                                            if (active) Color(0xFF315C91)
+                                            else Color(0xFF24262C)
                                         )
                                         .clickable {
                                             selectedTab = tab
@@ -598,10 +538,7 @@ fun GalleryKApp() {
                                     contentPadding = PaddingValues(8.dp),
                                     modifier = Modifier.fillMaxSize()
                                 ) {
-                                    items(
-                                        albums,
-                                        key = { it.id }
-                                    ) { album ->
+                                    items(albums, key = { it.id }) { album ->
                                         AlbumCard(album) {
                                             selectedAlbumId = album.id
                                         }
@@ -618,9 +555,7 @@ fun GalleryKApp() {
                                 Text(
                                     if (selectedTab == "Videos") {
                                         "No videos found"
-                                    } else {
-                                        "No photos found"
-                                    },
+                                    } else "No photos found",
                                     color = Color.White
                                 )
                             }
@@ -631,9 +566,7 @@ fun GalleryKApp() {
                                 "${displayedMedia.size} ${
                                     if (selectedTab == "Videos") {
                                         "Videos"
-                                    } else {
-                                        "Photos"
-                                    }
+                                    } else "Photos"
                                 }",
                                 color = Color.LightGray,
                                 modifier = Modifier.padding(
@@ -651,17 +584,13 @@ fun GalleryKApp() {
                                     displayedMedia,
                                     key = { it.uri.toString() }
                                 ) { media ->
-
                                     MediaThumbnail(
                                         media = media,
-                                        selected =
-                                            media.uri in selectedUris,
+                                        selected = media.uri in selectedUris,
                                         onClick = {
                                             if (selectionMode) {
                                                 selectedUris =
-                                                    if (
-                                                        media.uri in selectedUris
-                                                    ) {
+                                                    if (media.uri in selectedUris) {
                                                         selectedUris - media.uri
                                                     } else {
                                                         selectedUris + media.uri
@@ -755,8 +684,7 @@ private fun MediaThumbnail(
                 } else {
                     context.contentResolver
                         .openInputStream(media.uri)?.use {
-                            android.graphics.BitmapFactory
-                                .decodeStream(it)
+                            android.graphics.BitmapFactory.decodeStream(it)
                         }
                 }
             } catch (_: Exception) {
@@ -780,11 +708,8 @@ private fun MediaThumbnail(
             Image(
                 bitmap = bitmap!!.asImageBitmap(),
                 contentDescription =
-                    if (media.isVideo) {
-                        "Video thumbnail"
-                    } else {
-                        "Photo thumbnail"
-                    },
+                    if (media.isVideo) "Video thumbnail"
+                    else "Photo thumbnail",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
@@ -803,10 +728,7 @@ private fun MediaThumbnail(
                         Color(0x99000000),
                         RoundedCornerShape(50)
                     )
-                    .padding(
-                        horizontal = 9.dp,
-                        vertical = 5.dp
-                    )
+                    .padding(horizontal = 9.dp, vertical = 5.dp)
             ) {
                 Text(
                     "▶",
@@ -826,10 +748,7 @@ private fun MediaThumbnail(
                         Color(0xAA000000),
                         RoundedCornerShape(4.dp)
                     )
-                    .padding(
-                        horizontal = 4.dp,
-                        vertical = 2.dp
-                    )
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
             )
         }
 
@@ -851,10 +770,7 @@ private fun MediaThumbnail(
                             Color(0xFF2878D0),
                             RoundedCornerShape(50)
                         )
-                        .padding(
-                            horizontal = 7.dp,
-                            vertical = 2.dp
-                        )
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
                 )
             }
         }
@@ -868,18 +784,9 @@ private fun formatDuration(durationMs: Long): String {
     val seconds = totalSeconds % 60
 
     return if (hours > 0) {
-        String.format(
-            "%d:%02d:%02d",
-            hours,
-            minutes,
-            seconds
-        )
+        String.format("%d:%02d:%02d", hours, minutes, seconds)
     } else {
-        String.format(
-            "%d:%02d",
-            minutes,
-            seconds
-        )
+        String.format("%d:%02d", minutes, seconds)
     }
 }
 
@@ -901,8 +808,7 @@ private fun PhotoViewer(
             try {
                 context.contentResolver
                     .openInputStream(uri)?.use {
-                        android.graphics.BitmapFactory
-                            .decodeStream(it)
+                        android.graphics.BitmapFactory.decodeStream(it)
                     }
             } catch (_: Exception) {
                 null
@@ -951,9 +857,7 @@ private fun PhotoViewer(
                     contentScale = ContentScale.Fit
                 )
             } else {
-                CircularProgressIndicator(
-                    color = Color.White
-                )
+                CircularProgressIndicator(color = Color.White)
             }
         }
     }
@@ -982,23 +886,11 @@ private fun VideoPlayer(
         }
     }
 
-    var indicatorType by remember {
-        mutableStateOf("")
-    }
+    var indicatorType by remember { mutableStateOf("") }
+    var indicatorLevel by remember { mutableFloatStateOf(0f) }
+    var indicatorVisible by remember { mutableStateOf(false) }
+    var indicatorResetKey by remember { mutableIntStateOf(0) }
 
-    var indicatorLevel by remember {
-        mutableFloatStateOf(0f)
-    }
-
-    var indicatorVisible by remember {
-        mutableStateOf(false)
-    }
-
-    var indicatorResetKey by remember {
-        mutableIntStateOf(0)
-    }
-
-    // Hide indicator 1.5 seconds after the last swipe update
     LaunchedEffect(indicatorResetKey) {
         if (indicatorVisible) {
             delay(1500)
@@ -1008,7 +900,6 @@ private fun VideoPlayer(
 
     DisposableEffect(activity, exoPlayer) {
         val window = activity?.window
-
         val originalBrightness =
             window?.attributes?.screenBrightness ?: -1f
 
@@ -1033,9 +924,7 @@ private fun VideoPlayer(
         }
     }
 
-    BackHandler {
-        onBack()
-    }
+    BackHandler { onBack() }
 
     Box(
         modifier = Modifier
@@ -1047,9 +936,7 @@ private fun VideoPlayer(
                 PlayerView(viewContext).apply {
                     player = exoPlayer
                     useController = false
-                    resizeMode =
-                        AspectRatioFrameLayout.RESIZE_MODE_FIT
-
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     setShowBuffering(
                         PlayerView.SHOW_BUFFERING_WHEN_PLAYING
                     )
@@ -1064,7 +951,6 @@ private fun VideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Gesture detection layer
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1082,7 +968,7 @@ private fun VideoPlayer(
                     )
                 }
 
-                // Horizontal swipe: Live Forward / Backward
+                // Horizontal swipe: Forward / Backward
                 .pointerInput(exoPlayer, density) {
                     var startPosition = 0L
                     var dragDistancePx = 0f
@@ -1100,11 +986,9 @@ private fun VideoPlayer(
                             val timeChange = (dragDp * 100L).toLong()
 
                             var targetPosition =
-                                (startPosition + timeChange)
-                                    .coerceAtLeast(0L)
+                                (startPosition + timeChange).coerceAtLeast(0L)
 
                             val duration = exoPlayer.duration
-
                             if (duration > 0L) {
                                 targetPosition =
                                     targetPosition.coerceAtMost(duration)
@@ -1124,9 +1008,7 @@ private fun VideoPlayer(
 
                     detectVerticalDragGestures(
                         onDragStart = { offset ->
-                            brightnessSide =
-                                offset.x < size.width / 2f
-
+                            brightnessSide = offset.x < size.width / 2f
                             dragDistance = 0f
 
                             if (brightnessSide) {
@@ -1144,24 +1026,19 @@ private fun VideoPlayer(
                                 indicatorType = "brightness"
                                 indicatorLevel = startBrightness
                             } else {
-                                startVolume =
-                                    audioManager.getStreamVolume(
-                                        AudioManager.STREAM_MUSIC
-                                    )
+                                startVolume = audioManager.getStreamVolume(
+                                    AudioManager.STREAM_MUSIC
+                                )
 
-                                val maxVolume =
-                                    audioManager.getStreamMaxVolume(
-                                        AudioManager.STREAM_MUSIC
-                                    )
+                                val maxVolume = audioManager.getStreamMaxVolume(
+                                    AudioManager.STREAM_MUSIC
+                                )
 
                                 indicatorType = "volume"
-
                                 indicatorLevel =
                                     if (maxVolume > 0) {
                                         startVolume.toFloat() / maxVolume
-                                    } else {
-                                        0f
-                                    }
+                                    } else 0f
                             }
 
                             indicatorVisible = true
@@ -1171,32 +1048,26 @@ private fun VideoPlayer(
                             change.consume()
                             dragDistance += dragAmount
 
-                            if (brightnessSide) {
-                                // Full screen-height swipe = full brightness range
-                                val adjustment =
-                                    dragDistance / size.height.toFloat()
+                            // Same 35% swipe sensitivity for both
+                            val adjustment =
+                                dragDistance / (size.height * 0.35f)
 
+                            if (brightnessSide) {
                                 val newBrightness =
                                     (startBrightness - adjustment)
                                         .coerceIn(0.01f, 1f)
 
                                 activity?.window?.let { window ->
                                     val params = window.attributes
-                                    params.screenBrightness =
-                                        newBrightness
+                                    params.screenBrightness = newBrightness
                                     window.attributes = params
                                 }
 
                                 indicatorLevel = newBrightness
                             } else {
-                                // 25% screen-height swipe = full volume range
-                                val adjustment =
-                                    dragDistance / (size.height * 0.25f)
-
-                                val maxVolume =
-                                    audioManager.getStreamMaxVolume(
-                                        AudioManager.STREAM_MUSIC
-                                    )
+                                val maxVolume = audioManager.getStreamMaxVolume(
+                                    AudioManager.STREAM_MUSIC
+                                )
 
                                 val volumeChange =
                                     (-adjustment * maxVolume).toInt()
@@ -1214,9 +1085,7 @@ private fun VideoPlayer(
                                 indicatorLevel =
                                     if (maxVolume > 0) {
                                         newVolume.toFloat() / maxVolume
-                                    } else {
-                                        0f
-                                    }
+                                    } else 0f
                             }
 
                             indicatorVisible = true
