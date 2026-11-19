@@ -1,5 +1,3 @@
-package com.galleryk.app
-
 import android.Manifest
 import android.app.Activity
 import android.content.ContentUris
@@ -1261,16 +1259,9 @@ private fun VideoPlayer(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "‹ Back",
+                                "⟳",
                                 color = Color.White,
-                                modifier = Modifier
-                                    .clickable(onClick = onBack)
-                                    .padding(8.dp)
-                            )
-
-                            Text(
-                                if (isLandscape) "↙ Portrait" else "⛶ Rotate",
-                                color = Color.White,
+                                fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
@@ -1284,10 +1275,15 @@ private fun VideoPlayer(
                                             }
                                         controlsVisible = true
                                     }
-                                    .padding(
-                                        horizontal = 14.dp,
-                                        vertical = 9.dp
-                                    )
+                                    .padding(horizontal = 14.dp, vertical = 7.dp)
+                            )
+
+                            Text(
+                                "‹ Back",
+                                color = Color.White,
+                                modifier = Modifier
+                                    .clickable(onClick = onBack)
+                                    .padding(8.dp)
                             )
                         }
                     }
