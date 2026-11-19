@@ -981,7 +981,9 @@ private fun VideoPlayer(
                 it.attributes = params
             }
 
-            activity?.requestedOrientation = originalOrientation
+            originalOrientation?.let { savedOrientation ->
+                activity?.requestedOrientation = savedOrientation
+            }
             controller?.show(WindowInsetsCompat.Type.systemBars())
             exoPlayer.release()
         }
