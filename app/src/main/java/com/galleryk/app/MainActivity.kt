@@ -957,6 +957,7 @@ DisposableEffect(activity, exoPlayer) {
     val window = activity?.window  
     val originalBrightness =  
         window?.attributes?.screenBrightness ?: -1f  
+    val originalOrientation = activity?.requestedOrientation  
 
     val controller = window?.let {  
         WindowInsetsControllerCompat(it, it.decorView)  
@@ -975,6 +976,7 @@ DisposableEffect(activity, exoPlayer) {
         }  
 
         controller?.show(WindowInsetsCompat.Type.systemBars())  
+        originalOrientation?.let { activity?.requestedOrientation = it }  
         exoPlayer.release()  
     }  
 }  
@@ -1147,6 +1149,27 @@ Box(
 
     if (controlsVisible) {  
         Box(Modifier.fillMaxSize()) {  
+            Text(  
+                "⟳",  
+                color = Color.White,  
+                fontSize = 30.sp,  
+                modifier = Modifier  
+                    .align(Alignment.TopEnd)  
+                    .padding(top = 20.dp, end = 18.dp)  
+                    .clip(RoundedCornerShape(50))  
+                    .background(Color(0x55000000))  
+                    .clickable {  
+                        val isLandscape = activity?.resources?.configuration?.orientation ==  
+                            android.content.res.Configuration.ORIENTATION_LANDSCAPE  
+                        activity?.requestedOrientation = if (isLandscape) {  
+                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT  
+                        } else {  
+                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE  
+                        }  
+                        controlsVisible = true  
+                    }  
+                    .padding(horizontal = 14.dp, vertical = 10.dp)  
+            )  
             Text(  
                 if (isPlaying) "Ⅱ" else "▶",  
                 color = Color.White,  
