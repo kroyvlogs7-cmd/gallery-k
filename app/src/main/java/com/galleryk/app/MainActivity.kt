@@ -1029,7 +1029,6 @@ private fun VideoPlayer(
         val window = activity?.window
         val originalBrightness =
             window?.attributes?.screenBrightness ?: -1f
-        val originalOrientation = activity?.requestedOrientation
 
         val controller = window?.let {
             WindowInsetsControllerCompat(it, it.decorView)
@@ -1047,9 +1046,6 @@ private fun VideoPlayer(
                 it.attributes = params
             }
 
-            originalOrientation?.let { savedOrientation ->
-                activity?.requestedOrientation = savedOrientation
-            }
             controller?.show(WindowInsetsCompat.Type.systemBars())
             exoPlayer.release()
         }
@@ -1326,25 +1322,7 @@ private fun VideoPlayer(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                "⟳",
-                                color = Color.White,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFF315C91))
-                                    .clickable {
-                                        activity?.requestedOrientation =
-                                            if (isLandscape) {
-                                                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                            } else {
-                                                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                                            }
-                                        controlsVisible = true
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 7.dp)
-                            )
+                            Spacer(Modifier.weight(1f))
 
                             Text(
                                 "‹ Back",
