@@ -23,6 +23,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -33,6 +34,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -905,6 +907,7 @@ var duration by remember { mutableLongStateOf(0L) }
 var isScrubbing by remember { mutableStateOf(false) }  
 var sliderPosition by remember { mutableFloatStateOf(0f) }  
 var isPlaying by remember { mutableStateOf(true) }  
+var videoZoom by remember(uri) { mutableFloatStateOf(1f) }  
 
 DisposableEffect(exoPlayer) {  
     val listener = object : Player.Listener {  
@@ -1018,12 +1021,20 @@ Box(
             playerView.resizeMode =  
                 AspectRatioFrameLayout.RESIZE_MODE_FIT  
         },  
-        modifier = Modifier.fillMaxSize()  
+        modifier = Modifier.fillMaxSize().graphicsLayer {  
+            scaleX = videoZoom  
+            scaleY = videoZoom  
+        }  
     )  
 
     Box(  
         modifier = Modifier  
             .fillMaxSize()  
+            .pointerInput(exoPlayer) {  
+                detectTransformGestures { _, _, zoomChange, _ ->  
+                    videoZoom = (videoZoom * zoomChange).coerceIn(1f, 10f)  
+                }  
+            }  
             .pointerInput(exoPlayer) {  
                 detectTapGestures(  
                     onTap = {  
