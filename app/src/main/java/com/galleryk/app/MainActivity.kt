@@ -97,9 +97,33 @@ private fun requiredPermissions(): Array<String> {
 private fun hasMediaPermission(
     context: android.content.Context
 ): Boolean {
-    return requiredPermissions().any {
-        ContextCompat.checkSelfPermission(context, it) ==
-            PackageManager.PERMISSION_GRANTED
+    return if (Build.VERSION.SDK_INT >= 34) {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_MEDIA_IMAGES
+        ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_MEDIA_VIDEO
+            ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            ) == PackageManager.PERMISSION_GRANTED
+    } else if (Build.VERSION.SDK_INT >= 33) {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_MEDIA_IMAGES
+        ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_MEDIA_VIDEO
+            ) == PackageManager.PERMISSION_GRANTED
+    } else {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
     }
 }
 
@@ -134,13 +158,14 @@ private suspend fun loadGallery(
                 )
             }
 
-            context.contentResolver.query(
-                collection,
-                projection,
-                null,
-                null,
-                "$dateName DESC"
-            )?.use { cursor ->
+            try {
+                context.contentResolver.query(
+                    collection,
+                    projection,
+                    null,
+                    null,
+                    "$dateName DESC"
+                )?.use { cursor ->
 
                 val idIndex = cursor.getColumnIndexOrThrow(idColumnName)
                 val bucketIdIndex =
@@ -180,6 +205,10 @@ private suspend fun loadGallery(
                         )
                     )
                 }
+                }
+            } catch (_: SecurityException) {
+                // Partial media permission may allow images but not videos (or vice versa).
+                // Skip the inaccessible collection instead of failing the whole gallery.
             }
         }
 
@@ -662,6 +691,39 @@ private fun AlbumCard(
     }
 }
 
+private fun decodeSampledBitmap(
+    context: android.content.Context,
+    uri: Uri,
+    requestedWidth: Int,
+    requestedHeight: Int
+): Bitmap? {
+    val resolver = context.contentResolver
+
+    val bounds = android.graphics.BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    resolver.openInputStream(uri)?.use {
+        android.graphics.BitmapFactory.decodeStream(it, null, bounds)
+    }
+
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+    val options = android.graphics.BitmapFactory.Options().apply {
+        inSampleSize = 1
+    }
+    while (
+        bounds.outWidth / options.inSampleSize > requestedWidth ||
+        bounds.outHeight / options.inSampleSize > requestedHeight
+    ) {
+        options.inSampleSize *= 2
+    }
+
+    options.inJustDecodeBounds = false
+    return resolver.openInputStream(uri)?.use {
+        android.graphics.BitmapFactory.decodeStream(it, null, options)
+    }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun MediaThumbnail(
@@ -685,10 +747,12 @@ private fun MediaThumbnail(
                         null
                     )
                 } else {
-                    context.contentResolver
-                        .openInputStream(media.uri)?.use {
-                            android.graphics.BitmapFactory.decodeStream(it)
-                        }
+                    decodeSampledBitmap(
+                        context,
+                        media.uri,
+                        requestedWidth = 400,
+                        requestedHeight = 400
+                    )
                 }
             } catch (_: Exception) {
                 null
@@ -809,10 +873,12 @@ private fun PhotoViewer(
     LaunchedEffect(uri) {
         bitmap = withContext(Dispatchers.IO) {
             try {
-                context.contentResolver
-                    .openInputStream(uri)?.use {
-                        android.graphics.BitmapFactory.decodeStream(it)
-                    }
+                decodeSampledBitmap(
+                    context,
+                    uri,
+                    requestedWidth = 2048,
+                    requestedHeight = 2048
+                )
             } catch (_: Exception) {
                 null
             }
