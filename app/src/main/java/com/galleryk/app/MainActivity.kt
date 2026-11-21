@@ -1527,7 +1527,10 @@ private fun PrivacyFolderScreen(onClose: () -> Unit, onRefresh: () -> Unit) {
             }
             Text("PIN hash is saved locally on this device.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
         } else {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("${files.size} private files", color = Color.White, modifier = Modifier.weight(1f)); Button(onClick = { picker.launch(arrayOf("image/*", "video/*")) }, enabled = !busy) { Text("Add media") } }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(privacyFolderSummary(files), color = Color.White, modifier = Modifier.weight(1f))
+                Button(onClick = { picker.launch(arrayOf("image/*", "video/*")) }, enabled = !busy) { Text("Add media") }
+            }
             Text("Files are copied to app-private storage and hidden inside Gallery K. Original media is NOT deleted from the device or other gallery apps.", color = Color(0xFFFFD080), fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (files.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Privacy Folder is empty", color = Color.Gray) }
@@ -1541,4 +1544,18 @@ private fun PrivacyFolderScreen(onClose: () -> Unit, onRefresh: () -> Unit) {
             } }
         }
     }
+}
+
+
+// Privacy Folder overview: count media and show its total app-private storage size.
+private fun privacyFolderSummary(files: List<File>): String {
+    val totalBytes = files.sumOf { it.length() }
+    val videos = files.count { it.extension.lowercase() in listOf("mp4", "video", "3gp", "mkv", "webm") }
+    val photos = files.size - videos
+    val sizeLabel = when {
+        totalBytes >= 1024L * 1024L -> String.format("%.1f MB", totalBytes / (1024.0 * 1024.0))
+        totalBytes >= 1024L -> String.format("%.0f KB", totalBytes / 1024.0)
+        else -> "$totalBytes B"
+    }
+    return "$photos photos • $videos videos • $sizeLabel"
 }
