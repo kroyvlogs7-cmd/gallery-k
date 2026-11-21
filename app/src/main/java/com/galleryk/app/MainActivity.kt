@@ -29,8 +29,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridItemSpan\nimport androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -1441,7 +1440,7 @@ Box(
 private fun PrivacyFolderEntry(onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
         .clip(RoundedCornerShape(16.dp)).background(Color(0xFF272934))
-        .clickable { onClick() }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        .clickable(onClick).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("🔒", fontSize = 28.sp); Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) { Text("Privacy Folder", color = Color.White, fontWeight = FontWeight.Bold); Text("PIN-protected private media", color = Color.LightGray, fontSize = 12.sp) }
         Text("›", color = Color.White, fontSize = 24.sp)
