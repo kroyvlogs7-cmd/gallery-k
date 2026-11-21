@@ -59,6 +59,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class GalleryMedia(
@@ -235,6 +236,7 @@ var selectionMode by remember { mutableStateOf(false) }
 var selectedUris by remember { mutableStateOf(setOf<Uri>()) }
 var swipeSelectMode by remember { mutableStateOf(false) }
 val gridState = rememberLazyGridState()
+val swipeSelectScope = rememberCoroutineScope()
 var refreshKey by remember { mutableIntStateOf(0) }
 
 val permissionLauncher =
@@ -633,7 +635,9 @@ MaterialTheme {
                                             },
                                             onDrag = { change, dragAmount ->
                                                 change.consume()
-                                                gridState.scrollBy(-dragAmount.y)
+                                                swipeSelectScope.launch {
+                                                    gridState.scrollBy(-dragAmount.y)
+                                                }
                                                 selectAt(change.position)
                                             },
                                             onDragEnd = {
