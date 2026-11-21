@@ -29,7 +29,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan\nimport androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -556,24 +556,23 @@ MaterialTheme {
                             )
                         )
 
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
-                            contentPadding = PaddingValues(8.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                PrivacyFolderEntry(onClick = { privacyFolderOpen = true })
+                        PrivacyFolderEntry(onClick = { privacyFolderOpen = true })
+                        if (albums.isEmpty()) {
+                            Box(
+                                Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "No albums found",
+                                    color = Color.White
+                                )
                             }
-                            if (albums.isEmpty()) {
-                                item(span = { GridItemSpan(maxLineSpan) }) {
-                                    Box(
-                                        Modifier.fillMaxWidth().padding(16.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text("No albums found", color = Color.White)
-                                    }
-                                }
-                            } else {
+                        } else {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(2),
+                                contentPadding = PaddingValues(8.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
                                 items(albums, key = { it.id }) { album ->
                                     AlbumCard(album) {
                                         selectedAlbumId = album.id
@@ -703,7 +702,6 @@ MaterialTheme {
     }
 }
 
-}
 
 @Composable
 private fun AlbumCard(
@@ -743,7 +741,6 @@ Spacer(Modifier.height(8.dp))
     )
 }
 
-}
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -1434,7 +1431,6 @@ Box(
     }
 }
 
-}
 
 @Composable
 private fun PrivacyFolderEntry(onClick: () -> Unit) {
@@ -1528,10 +1524,7 @@ private fun PrivacyFolderScreen(onClose: () -> Unit, onRefresh: () -> Unit) {
             }
             Text("PIN hash is saved locally on this device.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
         } else {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(privacyFolderSummary(files), color = Color.White, modifier = Modifier.weight(1f))
-                Button(onClick = { picker.launch(arrayOf("image/*", "video/*")) }, enabled = !busy) { Text("Add media") }
-            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("${files.size} private files", color = Color.White, modifier = Modifier.weight(1f)); Button(onClick = { picker.launch(arrayOf("image/*", "video/*")) }, enabled = !busy) { Text("Add media") } }
             Text("Files are copied to app-private storage and hidden inside Gallery K. Original media is NOT deleted from the device or other gallery apps.", color = Color(0xFFFFD080), fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (files.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Privacy Folder is empty", color = Color.Gray) }
@@ -1545,18 +1538,4 @@ private fun PrivacyFolderScreen(onClose: () -> Unit, onRefresh: () -> Unit) {
             } }
         }
     }
-}
-
-
-// Privacy Folder overview: count media and show its total app-private storage size.
-private fun privacyFolderSummary(files: List<File>): String {
-    val totalBytes = files.sumOf { it.length() }
-    val videos = files.count { it.extension.lowercase() in listOf("mp4", "video", "3gp", "mkv", "webm") }
-    val photos = files.size - videos
-    val sizeLabel = when {
-        totalBytes >= 1024L * 1024L -> String.format("%.1f MB", totalBytes / (1024.0 * 1024.0))
-        totalBytes >= 1024L -> String.format("%.0f KB", totalBytes / 1024.0)
-        else -> "$totalBytes B"
-    }
-    return "$photos photos • $videos videos • $sizeLabel"
 }
