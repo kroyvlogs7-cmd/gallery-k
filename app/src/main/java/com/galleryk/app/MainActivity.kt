@@ -1,9 +1,9 @@
-
 package com.galleryk.app
 
 import android.Manifest
 import android.app.Activity
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -58,6 +59,9 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -239,6 +243,7 @@ var swipeSelectMode by remember { mutableStateOf(false) }
 val gridState = rememberLazyGridState()
 val swipeSelectScope = rememberCoroutineScope()
 var refreshKey by remember { mutableIntStateOf(0) }
+var privacyFolderOpen by remember { mutableStateOf(false) }
 
 val permissionLauncher =
     rememberLauncherForActivityResult(
@@ -280,8 +285,9 @@ LaunchedEffect(permissionGranted, refreshKey) {
         loading = true
         try {
             val result = loadGallery(context)
-            allMedia = result.first
-            albums = result.second
+            val hiddenUris = context.getSharedPreferences("gallery_privacy", android.content.Context.MODE_PRIVATE).getStringSet("hidden_original_uris", emptySet()) ?: emptySet()
+            allMedia = result.first.filterNot { it.uri.toString() in hiddenUris }
+            albums = allMedia.groupBy { it.albumId }.map { (id, items) -> PhotoAlbum(id, items.firstOrNull()?.albumName ?: "Other", items) }
         } catch (e: Exception) {
             Toast.makeText(
                 context,
@@ -336,12 +342,13 @@ fun requestDelete() {
 }
 
 BackHandler(
-    enabled = selectionMode ||
+    enabled = privacyFolderOpen || selectionMode ||
         selectedIndex >= 0 ||
         selectedAlbumId != null ||
         selectedTab != "Photos"
 ) {
     when {
+        privacyFolderOpen -> privacyFolderOpen = false
         selectionMode -> {
             selectionMode = false
             swipeSelectMode = false
@@ -358,7 +365,9 @@ MaterialTheme {
         modifier = Modifier.fillMaxSize(),
         color = Color(0xFF101114)
     ) {
-        if (
+        if (privacyFolderOpen) {
+            PrivacyFolderScreen(onClose = { privacyFolderOpen = false }, onRefresh = { refreshKey++ })
+        } else if (
             selectedIndex >= 0 &&
             selectedIndex < displayedMedia.size
         ) {
@@ -547,6 +556,7 @@ MaterialTheme {
                             )
                         )
 
+                        PrivacyFolderEntry(onClick = { privacyFolderOpen = true })
                         if (albums.isEmpty()) {
                             Box(
                                 Modifier.fillMaxSize(),
@@ -1423,4 +1433,112 @@ Box(
     }
 }
 
+}
+
+@Composable
+private fun PrivacyFolderEntry(onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
+        .clip(RoundedCornerShape(16.dp)).background(Color(0xFF272934))
+        .clickable(onClick).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("🔒", fontSize = 28.sp); Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) { Text("Privacy Folder", color = Color.White, fontWeight = FontWeight.Bold); Text("PIN-protected private media", color = Color.LightGray, fontSize = 12.sp) }
+        Text("›", color = Color.White, fontSize = 24.sp)
+    }
+}
+
+
+@Composable
+private fun PrivacyFolderScreen(onClose: () -> Unit, onRefresh: () -> Unit) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("gallery_privacy", android.content.Context.MODE_PRIVATE) }
+    var pin by remember { mutableStateOf("") }
+    var confirmPin by remember { mutableStateOf("") }
+    var unlocked by remember { mutableStateOf(false) }
+    var setup by remember { mutableStateOf(prefs.getString("pin_hash", null) == null) }
+    var error by remember { mutableStateOf("") }
+    var files by remember { mutableStateOf(emptyList<File>()) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val dir = remember { File(context.filesDir, "privacy_media").apply { mkdirs() } }
+    fun reload() { files = dir.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList() }
+    LaunchedEffect(unlocked) { if (unlocked) reload() }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { picked ->
+        if (picked.isNotEmpty()) scope.launch {
+            busy = true
+            var copied = 0
+            val hidden = prefs.getStringSet("hidden_original_uris", emptySet())?.toMutableSet() ?: mutableSetOf()
+            withContext(Dispatchers.IO) {
+                picked.forEach { source ->
+                    try {
+                        val mime = context.contentResolver.getType(source) ?: "application/octet-stream"
+                        val ext = when (mime) { "image/jpeg" -> ".jpg"; "image/png" -> ".png"; "image/webp" -> ".webp"; "video/mp4" -> ".mp4"; else -> if (mime.startsWith("video/")) ".video" else if (mime.startsWith("image/")) ".image" else ".dat" }
+                        val target = File(dir, "private_${System.currentTimeMillis()}_${(0..9999).random()}$ext")
+                        context.contentResolver.openInputStream(source)?.use { input -> FileOutputStream(target).use { output -> input.copyTo(output) } }
+                        if (target.exists() && target.length() > 0) { prefs.edit().putString("mime_${target.name}", mime).putString("source_${target.name}", source.toString()).apply(); hidden.add(source.toString()); copied++ } else target.delete()
+                    } catch (_: Exception) { }
+                }
+            }
+            prefs.edit().putStringSet("hidden_original_uris", hidden).apply()
+            busy = false; reload(); onRefresh()
+            Toast.makeText(context, "$copied file(s) copied. Original files are still on device.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun restore(file: File) {
+        scope.launch {
+            busy = true
+            val mime = prefs.getString("mime_${file.name}", null) ?: if (file.extension == "mp4") "video/mp4" else "image/jpeg"
+            val video = mime.startsWith("video/")
+            val target = if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, "Restored_${file.name.removePrefix("private_")}")
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) put(MediaStore.MediaColumns.RELATIVE_PATH, if (video) "Movies/GalleryK Restored" else "Pictures/GalleryK Restored")
+            }
+            var restored = false
+            withContext(Dispatchers.IO) {
+                try { val uri = context.contentResolver.insert(target, values); if (uri != null) context.contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) }; restored = true } } catch (_: Exception) { }
+            }
+            busy = false
+            if (restored) { Toast.makeText(context, "Restored into device gallery", Toast.LENGTH_SHORT).show(); file.delete(); val sourceUri = prefs.getString("source_${file.name}", null); val hiddenUris = prefs.getStringSet("hidden_original_uris", emptySet())?.toMutableSet() ?: mutableSetOf(); if (sourceUri != null) hiddenUris.remove(sourceUri); prefs.edit().putStringSet("hidden_original_uris", hiddenUris).remove("mime_${file.name}").remove("source_${file.name}").apply(); reload(); onRefresh() }
+            else Toast.makeText(context, "Restore failed", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    Column(Modifier.fillMaxSize().background(Color(0xFF101114)).padding(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) { TextButton(onClick = onClose) { Text("‹ Back", color = Color.White) }; Text("Privacy Folder", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
+        if (!unlocked) {
+            Column(Modifier.fillMaxWidth().padding(top = 36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("🔐", fontSize = 48.sp); Text(if (setup) "Create 4-digit PIN" else "Enter PIN", color = Color.White, fontSize = 20.sp)
+                Spacer(Modifier.height(10.dp)); OutlinedTextField(pin, { pin = it.filter(Char::isDigit).take(4) }, label = { Text("PIN") }, singleLine = true)
+                if (setup) OutlinedTextField(confirmPin, { confirmPin = it.filter(Char::isDigit).take(4) }, label = { Text("Confirm PIN") }, singleLine = true)
+                if (error.isNotBlank()) Text(error, color = Color(0xFFFF8080), modifier = Modifier.padding(8.dp))
+                Button(onClick = {
+                    error = ""
+                    if (pin.length != 4) error = "PIN must be 4 digits"
+                    else if (setup && pin != confirmPin) error = "PINs don't match"
+                    else {
+                        val hash = MessageDigest.getInstance("SHA-256").digest(pin.toByteArray()).joinToString("") { "%02x".format(it) }
+                        if (setup) { prefs.edit().putString("pin_hash", hash).apply(); setup = false; unlocked = true }
+                        else if (prefs.getString("pin_hash", null) == hash) unlocked = true else error = "Incorrect PIN"
+                    }
+                }, modifier = Modifier.padding(top = 10.dp)) { Text(if (setup) "Save PIN" else "Unlock") }
+            }
+            Text("PIN hash is saved locally on this device.", color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("${files.size} private files", color = Color.White, modifier = Modifier.weight(1f)); Button(onClick = { picker.launch(arrayOf("image/*", "video/*")) }, enabled = !busy) { Text("Add media") } }
+            Text("Files are copied to app-private storage and hidden inside Gallery K. Original media is NOT deleted from the device or other gallery apps.", color = Color(0xFFFFD080), fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (files.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Privacy Folder is empty", color = Color.Gray) }
+            else androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize()) { items(files, key = { it.name }) { file ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 5.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF252832)).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (file.extension in listOf("mp4", "video")) "🎞️" else "🖼️", fontSize = 22.sp)
+                    Column(Modifier.weight(1f).padding(horizontal = 8.dp)) { Text(file.name.removePrefix("private_"), color = Color.White, maxLines = 1); Text("${file.length()/1024} KB", color = Color.Gray, fontSize = 11.sp) }
+                    TextButton(enabled = !busy, onClick = { restore(file) }) { Text("Restore") }
+                    TextButton(enabled = !busy, onClick = { file.delete(); prefs.edit().remove("mime_${file.name}").apply(); reload() }) { Text("Delete", color = Color(0xFFFF8888)) }
+                }
+            } }
+        }
+    }
 }
