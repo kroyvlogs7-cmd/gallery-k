@@ -29,6 +29,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
@@ -556,23 +557,24 @@ MaterialTheme {
                             )
                         )
 
-                        PrivacyFolderEntry(onClick = { privacyFolderOpen = true })
-                        if (albums.isEmpty()) {
-                            Box(
-                                Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    "No albums found",
-                                    color = Color.White
-                                )
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            contentPadding = PaddingValues(8.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                PrivacyFolderEntry(onClick = { privacyFolderOpen = true })
                             }
-                        } else {
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(2),
-                                contentPadding = PaddingValues(8.dp),
-                                modifier = Modifier.fillMaxSize()
-                            ) {
+                            if (albums.isEmpty()) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    Box(
+                                        Modifier.fillMaxWidth().padding(16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("No albums found", color = Color.White)
+                                    }
+                                }
+                            } else {
                                 items(albums, key = { it.id }) { album ->
                                     AlbumCard(album) {
                                         selectedAlbumId = album.id
