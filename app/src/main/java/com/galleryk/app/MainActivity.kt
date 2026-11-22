@@ -384,7 +384,7 @@ MaterialTheme {
                 )
             }
         } 
-        } else if (  
+        else if (  
             selectedIndex >= 0 &&  
             selectedIndex < displayedMedia.size  
         ) {  
@@ -670,7 +670,6 @@ MaterialTheme {
         }  
     }  
 }
-
 }
 
 @Composable
@@ -1730,7 +1729,7 @@ private fun PrivacyPinGate(
 ) {
     var input by remember { mutableStateOf("") }
     var firstPin by remember { mutableStateOf("") }
-    var stage by remember { mutableStateOf(if (existingHash == null || changeMode) "new" else "unlock")
+    var stage by remember { mutableStateOf(if (existingHash == null || changeMode) "new" else "unlock") }
     var error by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().background(Color.Black).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Privacy Folder", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
@@ -1751,7 +1750,8 @@ private fun PrivacyPinGate(
                                 "unlock" -> if (pinDigest(input) == existingHash) onSuccess() else { error = "Incorrect PIN"; input = "" }
                                 "new" -> { firstPin = input; input = ""; stage = "confirm" }
                                 "confirm" -> if (input == firstPin) onPinSaved(pinDigest(input)) else { error = "PINs don't match"; input = ""; stage = "new" }
-                            } else error = "Enter all 4 digits"
+                            }
+                            else error = "Enter all 4 digits"
                             else -> if(input.length < 4) input += key
                         }
                     }, modifier = Modifier.size(width = 82.dp, height = 58.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF29232F))) { Text(key, color = Color.White, fontSize = 20.sp) }
