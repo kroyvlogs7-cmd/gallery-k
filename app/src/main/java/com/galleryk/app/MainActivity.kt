@@ -1396,6 +1396,15 @@ private fun PrivacyFolderScreen(
 
     val privatePhotosDir = remember { File(context.filesDir, "privacy_folder/photos") }
     val privateVideosDir = remember { File(context.filesDir, "privacy_folder/videos") }
+    fun toMediaStoreUri(uri: Uri): Uri? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return try {
+            if (uri.authority == MediaStore.AUTHORITY) uri
+            else MediaStore.getMediaUri(context, uri)
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun refreshSavedFiles() {
         val photos = privatePhotosDir.listFiles()?.filter { it.isFile } ?: emptyList()
@@ -1408,11 +1417,11 @@ private fun PrivacyFolderScreen(
     LaunchedEffect(Unit) { refreshSavedFiles() }
 
     val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia()
+        ActivityResultContracts.OpenMultipleDocuments()
     ) { uris -> pickedPhotos = uris }
 
     val videoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia()
+        ActivityResultContracts.OpenMultipleDocuments()
     ) { uris -> pickedVideos = uris }
 
     val deleteOriginalsLauncher = rememberLauncherForActivityResult(
@@ -1465,22 +1474,14 @@ private fun PrivacyFolderScreen(
 
         Button(
             onClick = {
-                photoPicker.launch(
-                    androidx.activity.result.PickVisualMediaRequest(
-                        ActivityResultContracts.PickVisualMedia.ImageOnly
-                    )
-                )
+                photoPicker.launch(arrayOf("image/*"))
             },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Add Photos (${pickedPhotos.size})") }
 
         Button(
             onClick = {
-                videoPicker.launch(
-                    androidx.activity.result.PickVisualMediaRequest(
-                        ActivityResultContracts.PickVisualMedia.VideoOnly
-                    )
-                )
+                videoPicker.launch(arrayOf("video/*"))
             },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Add Videos (${pickedVideos.size})") }
@@ -1514,7 +1515,7 @@ private fun PrivacyFolderScreen(
                                 }
                                 if (target.exists() && target.length() > 0) {
                                     photoSaved++
-                                    copiedUris.add(uri)
+                                    toMediaStoreUri(uri)?.let { copiedUris.add(it) }
                                 } else target.delete()
                             }
                             videos.forEach { uri ->
@@ -1527,7 +1528,7 @@ private fun PrivacyFolderScreen(
                                 }
                                 if (target.exists() && target.length() > 0) {
                                     videoSaved++
-                                    copiedUris.add(uri)
+                                    toMediaStoreUri(uri)?.let { copiedUris.add(it) }
                                 } else target.delete()
                             }
                         } catch (_: Exception) { }
@@ -1545,7 +1546,7 @@ private fun PrivacyFolderScreen(
 
                     // Delete originals only after a private copy was successfully created,
                     // and only after the user confirms Android's system delete dialog.
-                    val copiedSuccessfully = result.second
+                    val copiedSuccessfully = result.second.distinct()
                     if (copiedSuccessfully.isNotEmpty()) {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                             try {
@@ -1569,6 +1570,12 @@ private fun PrivacyFolderScreen(
                                 Toast.LENGTH_LONG
                             ).show()
                         }
+                    } else if (result.first.first + result.first.second > 0) {
+                        Toast.makeText(
+                            context,
+                            "Private copies saved, but Android could not map the selected files for Gallery deletion. Originals were kept.",
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
             },
