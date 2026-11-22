@@ -425,7 +425,15 @@ MaterialTheme {
                 }  
 
                 if (!selectionMode) {
-                    TextButton(onClick = { privacyFolderScreen = true }) {
+                    Button(
+                        onClick = { privacyFolderScreen = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF315C91)
+                        )
+                    ) {
                         Text("Privacy Folder", color = Color.White)
                     }
                 }
