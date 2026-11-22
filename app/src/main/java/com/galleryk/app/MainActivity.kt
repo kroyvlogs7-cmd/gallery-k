@@ -8,6 +8,9 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import java.security.MessageDigest
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -234,6 +237,18 @@ var selectionMode by remember { mutableStateOf(false) }
 var selectedUris by remember { mutableStateOf(setOf<Uri>()) }  
 var refreshKey by remember { mutableIntStateOf(0) }  
 var privacyFolderScreen by remember { mutableStateOf(false) }
+var privacyPinUnlocked by remember { mutableStateOf(false) }
+var privacyPinChanging by remember { mutableStateOf(false) }
+val pinPrefs = remember { context.getSharedPreferences("gallery_k_privacy_pin", android.content.Context.MODE_PRIVATE) }
+var storedPinHash by remember { mutableStateOf(pinPrefs.getString("pin_hash", null)) }
+DisposableEffect(context) {
+    val lifecycle = (context as? ComponentActivity)?.lifecycle
+    val observer = LifecycleEventObserver { _, event ->
+        if (event == Lifecycle.Event.ON_STOP) { privacyPinUnlocked = false; privacyPinChanging = false }
+    }
+    lifecycle?.addObserver(observer)
+    onDispose { lifecycle?.removeObserver(observer) }
+}
 
 val permissionLauncher =  
     rememberLauncherForActivityResult(  
@@ -336,7 +351,7 @@ BackHandler(
         selectedTab != "Photos"  
 ) {  
     when {  
-        privacyFolderScreen -> privacyFolderScreen = false
+        privacyFolderScreen -> { privacyFolderScreen = false; privacyPinUnlocked = false; privacyPinChanging = false }
         selectionMode -> {  
             selectionMode = false  
             selectedUris = emptySet()  
@@ -353,10 +368,22 @@ MaterialTheme {
         color = Color(0xFF101114)  
     ) {  
         if (privacyFolderScreen) {
-            PrivacyFolderScreen(
-                onBack = { privacyFolderScreen = false },
-                onOriginalsDeleted = { refreshKey++ }
-            )
+            if (!privacyPinUnlocked || privacyPinChanging || storedPinHash == null) {
+                PrivacyPinGate(
+                    existingHash = storedPinHash,
+                    changeMode = privacyPinChanging,
+                    onCancelChange = { privacyPinChanging = false },
+                    onSuccess = { privacyPinUnlocked = true; privacyPinChanging = false },
+                    onPinSaved = { hash -> pinPrefs.edit().putString("pin_hash", hash).apply(); storedPinHash = hash; privacyPinUnlocked = true; privacyPinChanging = false }
+                )
+            } else {
+                PrivacyFolderScreen(
+                    onBack = { privacyFolderScreen = false; privacyPinUnlocked = false },
+                    onOriginalsDeleted = { refreshKey++ },
+                    onChangePin = { privacyPinChanging = true; privacyPinUnlocked = false }
+                )
+            }
+        } 
         } else if (  
             selectedIndex >= 0 &&  
             selectedIndex < displayedMedia.size  
@@ -1381,7 +1408,8 @@ Box(
 @Composable
 private fun PrivacyFolderScreen(
     onBack: () -> Unit,
-    onOriginalsDeleted: () -> Unit
+    onOriginalsDeleted: () -> Unit,
+    onChangePin: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1471,6 +1499,7 @@ private fun PrivacyFolderScreen(
             fontWeight = FontWeight.Bold
         )
         Text("Choose photos and videos", color = Color.LightGray, fontSize = 16.sp)
+        OutlinedButton(onClick = onChangePin, modifier = Modifier.fillMaxWidth()) { Text("Change PIN") }
 
         Button(
             onClick = {
@@ -1683,5 +1712,52 @@ private fun PrivacyFolderScreen(
                 }
             }
         }
+    }
+}
+
+
+private fun pinDigest(pin: String): String = MessageDigest.getInstance("SHA-256")
+    .digest(pin.toByteArray()).joinToString("") { "%02x".format(it) }
+
+
+@Composable
+private fun PrivacyPinGate(
+    existingHash: String?,
+    changeMode: Boolean,
+    onCancelChange: () -> Unit,
+    onSuccess: () -> Unit,
+    onPinSaved: (String) -> Unit
+) {
+    var input by remember { mutableStateOf("") }
+    var firstPin by remember { mutableStateOf("") }
+    var stage by remember { mutableStateOf(if (existingHash == null || changeMode) "new" else "unlock")
+    var error by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxSize().background(Color.Black).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Text("Privacy Folder", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        Text(when(stage) { "unlock" -> "Enter PIN"; "confirm" -> "Confirm PIN"; else -> "Set 4-digit PIN" }, color = Color.LightGray, fontSize = 17.sp)
+        Spacer(Modifier.height(24.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { repeat(4) { i -> Box(Modifier.size(16.dp).background(if (input.length > i) Color(0xFF9B59FF) else Color.DarkGray, RoundedCornerShape(50))) } }
+        Spacer(Modifier.height(16.dp))
+        if (error.isNotBlank()) Text(error, color = Color(0xFFFF6B6B))
+        listOf("1","2","3","4","5","6","7","8","9","⌫","0","✓").chunked(3).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 5.dp)) {
+                row.forEach { key ->
+                    Button(onClick = {
+                        error = ""
+                        when(key) {
+                            "⌫" -> input = input.dropLast(1)
+                            "✓" -> if (input.length == 4) when(stage) {
+                                "unlock" -> if (pinDigest(input) == existingHash) onSuccess() else { error = "Incorrect PIN"; input = "" }
+                                "new" -> { firstPin = input; input = ""; stage = "confirm" }
+                                "confirm" -> if (input == firstPin) onPinSaved(pinDigest(input)) else { error = "PINs don't match"; input = ""; stage = "new" }
+                            } else error = "Enter all 4 digits"
+                            else -> if(input.length < 4) input += key
+                        }
+                    }, modifier = Modifier.size(width = 82.dp, height = 58.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF29232F))) { Text(key, color = Color.White, fontSize = 20.sp) }
+                }
+            }
+        }
+        if (changeMode) TextButton(onClick = onCancelChange) { Text("Cancel", color = Color.LightGray) }
     }
 }
