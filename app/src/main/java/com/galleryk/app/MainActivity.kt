@@ -2,6 +2,9 @@ package com.galleryk.app
 
 import android.Manifest
 import android.app.Activity
+import android.hardware.biometrics.BiometricPrompt
+import android.os.CancellationSignal
+import java.util.concurrent.Executor
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.pm.PackageManager
@@ -1428,10 +1431,6 @@ private fun PrivacyFolderScreen(
     var previewFile by remember { mutableStateOf<File?>(null) }
     var mediaFilter by remember { mutableStateOf("All") }
     var selectedPrivateFiles by remember { mutableStateOf(setOf<String>()) }
-    val privacyPrefs = remember { context.getSharedPreferences("gallery_k_privacy_options", android.content.Context.MODE_PRIVATE) }
-    var skipDeleteConfirm by remember { mutableStateOf(privacyPrefs.getBoolean("skip_delete_confirm", false)) }
-    var showDeleteConfirm by remember { mutableStateOf(false) }
-    var pendingDeleteUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
 
 
     val privatePhotosDir = remember { File(context.filesDir, "privacy_folder/photos") }
@@ -1540,31 +1539,6 @@ private fun PrivacyFolderScreen(
     }
 
 
-    if (showDeleteConfirm) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("Remove originals from Gallery?") },
-            text = { Text("Private copies have been saved. Do you want to remove the selected originals from Gallery?") },
-            confirmButton = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = skipDeleteConfirm, onCheckedChange = { checked ->
-                        skipDeleteConfirm = checked
-                        privacyPrefs.edit().putBoolean("skip_delete_confirm", checked).apply()
-                    })
-                    Text("Don't ask again", fontSize = 12.sp)
-                    TextButton(onClick = {
-                        showDeleteConfirm = false
-                        val uris = pendingDeleteUris.toList()
-                        pendingDeleteUris = emptyList()
-                        launchOriginalDeleteRequest(uris)
-                    }) { Text("Allow") }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false; pendingDeleteUris = emptyList() }) { Text("Deny") }
-            }
-        )
-    }
 
 
     val openFile = previewFile
@@ -1682,14 +1656,7 @@ private fun PrivacyFolderScreen(
                     // Originals are offered for removal only after private copies were saved.
                     val copiedSuccessfully = result.second.distinct()
                     if (copiedSuccessfully.isNotEmpty()) {
-                        pendingDeleteUris = copiedSuccessfully
-                        if (skipDeleteConfirm) {
-                            val uris = pendingDeleteUris.toList()
-                            pendingDeleteUris = emptyList()
-                            launchOriginalDeleteRequest(uris)
-                        } else {
-                            showDeleteConfirm = true
-                        }
+                        launchOriginalDeleteRequest(copiedSuccessfully)
                     } else if (result.first.first + result.first.second > 0) {
                         Toast.makeText(
                             context,
@@ -1882,6 +1849,21 @@ private fun PrivacyPinGate(
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { repeat(4) { i -> Box(Modifier.size(16.dp).background(if (input.length > i) Color(0xFF9B59FF) else Color.DarkGray, RoundedCornerShape(50))) } }
         Spacer(Modifier.height(16.dp))
         if (error.isNotBlank()) Text(error, color = Color(0xFFFF6B6B))
+        if (stage == "unlock" && !changeMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val activity = context as? Activity
+            if (activity != null) {
+                TextButton(onClick = {
+                    val executor = ContextCompat.getMainExecutor(context)
+                    val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
+                        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) { onSuccess() }
+                        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) { error = errString.toString() }
+                        override fun onAuthenticationFailed() { error = "Fingerprint not recognized" }
+                    })
+                    val info = BiometricPrompt.PromptInfo.Builder().setTitle("Unlock Privacy Folder")
+                        .setSubtitle("Use your fingerprint or enter PIN").setNegativeButtonText("Use PIN").build()
+                    prompt.authenticate(info)
+                }) { Text("Unlock with fingerprint", color = Color(0xFFB98AFF)) }
+        }
         listOf("1","2","3","4","5","6","7","8","9","⌫","0","✓").chunked(3).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 5.dp)) {
                 row.forEach { key ->
