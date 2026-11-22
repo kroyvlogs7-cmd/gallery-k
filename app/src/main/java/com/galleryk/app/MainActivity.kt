@@ -10,7 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.widget.Toast
-import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -232,38 +231,6 @@ var selectionMode by remember { mutableStateOf(false) }
 var selectedUris by remember { mutableStateOf(setOf<Uri>()) }  
 var refreshKey by remember { mutableIntStateOf(0) }  
 var privacyFolderScreen by remember { mutableStateOf(false) }
-val privacyFolderPrefs = remember { context.getSharedPreferences("privacy_folder", android.content.Context.MODE_PRIVATE) }
-var privacyFolderItems by remember {
-    mutableStateOf(privacyFolderPrefs.getStringSet("items", emptySet())?.toList() ?: emptyList())
-}
-
-
-val privacyMediaPicker = rememberLauncherForActivityResult(
-    ActivityResultContracts.PickMultipleVisualMedia()
-) { uris ->
-    val folder = File(context.filesDir, "privacy_folder_media")
-    if (!folder.exists()) folder.mkdirs()
-    var added = 0
-    uris.forEach { uri ->
-        try {
-            val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                val nameColumn = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (cursor.moveToFirst() && nameColumn >= 0) cursor.getString(nameColumn) else null
-            } ?: "media_${System.currentTimeMillis()}"
-            val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_")
-            val destination = File(folder, "${System.currentTimeMillis()}_$safeName")
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                destination.outputStream().use { output -> input.copyTo(output) }
-                privacyFolderItems = privacyFolderItems + destination.name
-                privacyFolderPrefs.edit().putStringSet("items", privacyFolderItems.toSet()).apply()
-                added++
-            }
-        } catch (_: Exception) {
-            Toast.makeText(context, "Couldn't add one of the selected items", Toast.LENGTH_SHORT).show()
-        }
-    }
-    if (added > 0) Toast.makeText(context, "$added item(s) added to Privacy Folder", Toast.LENGTH_SHORT).show()
-}
 
 val permissionLauncher =  
     rememberLauncherForActivityResult(  
@@ -383,13 +350,7 @@ MaterialTheme {
         color = Color(0xFF101114)  
     ) {  
         if (privacyFolderScreen) {
-            PrivacyFolderBasicScreen(
-                items = privacyFolderItems,
-                onAddMedia = { privacyMediaPicker.launch(
-                    ActivityResultContracts.PickMultipleVisualMedia.ImageAndVideo
-                ) },
-                onBack = { privacyFolderScreen = false }
-            )
+            PrivacyFolderBasicScreen(onBack = { privacyFolderScreen = false })
         } else if (  
             selectedIndex >= 0 &&  
             selectedIndex < displayedMedia.size  
@@ -1411,14 +1372,19 @@ Box(
 }
 
 
-}
-
 @Composable
-private fun PrivacyFolderBasicScreen(
-    items: List<String>,
-    onAddMedia: () -> Unit,
-    onBack: () -> Unit
-) {
+private fun PrivacyFolderBasicScreen(onBack: () -> Unit) {
+    var pickedPhotos by remember { mutableStateOf(listOf<Uri>()) }
+    var pickedVideos by remember { mutableStateOf(listOf<Uri>()) }
+
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris -> pickedPhotos = uris }
+
+    val videoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris -> pickedVideos = uris }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1438,32 +1404,52 @@ private fun PrivacyFolderBasicScreen(
             fontSize = 26.sp,
             fontWeight = FontWeight.Bold
         )
-        Button(onClick = onAddMedia, modifier = Modifier.fillMaxWidth()) {
-            Text("Add Photos & Videos")
+        Text(
+            text = "Choose photos and videos",
+            color = Color.LightGray,
+            fontSize = 16.sp
+        )
+
+        Button(
+            onClick = {
+                photoPicker.launch(
+                    ActivityResultContracts.PickMultipleVisualMedia.ImageOnly
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Add Photos (${pickedPhotos.size})")
         }
-        Text("${items.size} items", color = Color.LightGray)
-        if (items.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("No media added yet", color = Color.Gray)
-            }
-        } else {
-            androidx.compose.foundation.lazy.LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(items) { fileName ->
-                    Text(
-                        text = fileName,
-                        color = Color.White,
-                        modifier = Modifier.fillMaxWidth()
-                            .background(Color(0xFF24252A), RoundedCornerShape(8.dp))
-                            .padding(12.dp)
-                    )
-                }
-            }
+
+        Button(
+            onClick = {
+                videoPicker.launch(
+                    ActivityResultContracts.PickMultipleVisualMedia.VideoOnly
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Add Videos (${pickedVideos.size})")
+        }
+
+        Text(
+            text = "Selected: ${pickedPhotos.size} photos • ${pickedVideos.size} videos",
+            color = Color.White,
+            fontSize = 15.sp
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = if (pickedPhotos.isEmpty() && pickedVideos.isEmpty())
+                    "No media selected yet."
+                else "Selection ready. Moving media into the private folder is the next step.",
+                color = Color.Gray
+            )
         }
     }
 }
