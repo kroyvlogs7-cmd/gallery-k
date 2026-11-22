@@ -556,23 +556,24 @@ MaterialTheme {
                             )
                         )
 
-                        PrivacyFolderEntry(onClick = { privacyFolderOpen = true })
-                        if (albums.isEmpty()) {
-                            Box(
-                                Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    "No albums found",
-                                    color = Color.White
-                                )
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            contentPadding = PaddingValues(8.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                PrivacyFolderEntry(onClick = { privacyFolderOpen = true })
                             }
-                        } else {
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(2),
-                                contentPadding = PaddingValues(8.dp),
-                                modifier = Modifier.fillMaxSize()
-                            ) {
+                            if (albums.isEmpty()) {
+                                item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                    Box(
+                                        Modifier.fillMaxWidth().height(160.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("No albums found", color = Color.White)
+                                    }
+                                }
+                            } else {
                                 items(albums, key = { it.id }) { album ->
                                     AlbumCard(album) {
                                         selectedAlbumId = album.id
