@@ -1428,6 +1428,10 @@ private fun PrivacyFolderScreen(
     var previewFile by remember { mutableStateOf<File?>(null) }
     var mediaFilter by remember { mutableStateOf("All") }
     var selectedPrivateFiles by remember { mutableStateOf(setOf<String>()) }
+    val privacyPrefs = remember { context.getSharedPreferences("gallery_k_privacy_options", android.content.Context.MODE_PRIVATE) }
+    var skipDeleteConfirm by remember { mutableStateOf(privacyPrefs.getBoolean("skip_delete_confirm", false)) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var pendingDeleteUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
 
 
     val privatePhotosDir = remember { File(context.filesDir, "privacy_folder/photos") }
@@ -1520,6 +1524,48 @@ private fun PrivacyFolderScreen(
             Toast.makeText(context, "Private copies saved. Originals were kept in Gallery.", Toast.LENGTH_LONG).show()
         }
     }
+
+    fun launchOriginalDeleteRequest(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val deleteRequest = MediaStore.createDeleteRequest(context.contentResolver, uris)
+                deleteOriginalsLauncher.launch(IntentSenderRequest.Builder(deleteRequest.intentSender).build())
+            } catch (_: Exception) {
+                Toast.makeText(context, "Private copies saved, but Gallery removal could not be started.", Toast.LENGTH_LONG).show()
+            }
+        } else {
+            Toast.makeText(context, "Private copies saved. Android requires a separate delete permission on this version.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Remove originals from Gallery?") },
+            text = { Text("Private copies have been saved. Do you want to remove the selected originals from Gallery?") },
+            confirmButton = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = skipDeleteConfirm, onCheckedChange = { checked ->
+                        skipDeleteConfirm = checked
+                        privacyPrefs.edit().putBoolean("skip_delete_confirm", checked).apply()
+                    })
+                    Text("Don't ask again", fontSize = 12.sp)
+                    TextButton(onClick = {
+                        showDeleteConfirm = false
+                        val uris = pendingDeleteUris.toList()
+                        pendingDeleteUris = emptyList()
+                        launchOriginalDeleteRequest(uris)
+                    }) { Text("Allow") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false; pendingDeleteUris = emptyList() }) { Text("Deny") }
+            }
+        )
+    }
+
 
     val openFile = previewFile
     if (openFile != null) {
@@ -1633,31 +1679,16 @@ private fun PrivacyFolderScreen(
                         Toast.LENGTH_LONG
                     ).show()
 
-                    // Delete originals only after a private copy was successfully created,
-                    // and only after the user confirms Android's system delete dialog.
+                    // Originals are offered for removal only after private copies were saved.
                     val copiedSuccessfully = result.second.distinct()
                     if (copiedSuccessfully.isNotEmpty()) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            try {
-                                val deleteRequest = MediaStore.createDeleteRequest(
-                                    context.contentResolver, copiedSuccessfully
-                                )
-                                deleteOriginalsLauncher.launch(
-                                    IntentSenderRequest.Builder(deleteRequest.intentSender).build()
-                                )
-                            } catch (_: Exception) {
-                                Toast.makeText(
-                                    context,
-                                    "Private copies saved, but Gallery removal could not be started.",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
+                        pendingDeleteUris = copiedSuccessfully
+                        if (skipDeleteConfirm) {
+                            val uris = pendingDeleteUris.toList()
+                            pendingDeleteUris = emptyList()
+                            launchOriginalDeleteRequest(uris)
                         } else {
-                            Toast.makeText(
-                                context,
-                                "Private copies saved. Android requires a separate delete permission on this version.",
-                                Toast.LENGTH_LONG
-                            ).show()
+                            showDeleteConfirm = true
                         }
                     } else if (result.first.first + result.first.second > 0) {
                         Toast.makeText(
