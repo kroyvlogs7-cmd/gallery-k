@@ -239,12 +239,13 @@ var refreshKey by remember { mutableIntStateOf(0) }
 var privacyFolderScreen by remember { mutableStateOf(false) }
 var privacyPinUnlocked by remember { mutableStateOf(false) }
 var privacyPinChanging by remember { mutableStateOf(false) }
+var privacyPickerActive by remember { mutableStateOf(false) }
 val pinPrefs = remember { context.getSharedPreferences("gallery_k_privacy_pin", android.content.Context.MODE_PRIVATE) }
 var storedPinHash by remember { mutableStateOf(pinPrefs.getString("pin_hash", null)) }
 DisposableEffect(context) {
     val lifecycle = (context as? ComponentActivity)?.lifecycle
     val observer = LifecycleEventObserver { _, event ->
-        if (event == Lifecycle.Event.ON_STOP) { privacyPinUnlocked = false; privacyPinChanging = false }
+        if (event == Lifecycle.Event.ON_STOP && !privacyPickerActive) { privacyPinUnlocked = false; privacyPinChanging = false }
     }
     lifecycle?.addObserver(observer)
     onDispose { lifecycle?.removeObserver(observer) }
@@ -378,9 +379,11 @@ MaterialTheme {
                 )
             } else {
                 PrivacyFolderScreen(
-                    onBack = { privacyFolderScreen = false; privacyPinUnlocked = false },
+                    onBack = { privacyFolderScreen = false; privacyPinUnlocked = false; privacyPickerActive = false },
                     onOriginalsDeleted = { refreshKey++ },
-                    onChangePin = { privacyPinChanging = true; privacyPinUnlocked = false }
+                    onChangePin = { privacyPinChanging = true; privacyPinUnlocked = false },
+                    onPickerStart = { privacyPickerActive = true },
+                    onPickerEnd = { privacyPickerActive = false }
                 )
             }
         } 
@@ -1408,7 +1411,9 @@ Box(
 private fun PrivacyFolderScreen(
     onBack: () -> Unit,
     onOriginalsDeleted: () -> Unit,
-    onChangePin: () -> Unit
+    onChangePin: () -> Unit,
+    onPickerStart: () -> Unit,
+    onPickerEnd: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1445,11 +1450,17 @@ private fun PrivacyFolderScreen(
 
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris -> pickedPhotos = uris }
+    ) { uris ->
+        pickedPhotos = uris
+        onPickerEnd()
+    }
 
     val videoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris -> pickedVideos = uris }
+    ) { uris ->
+        pickedVideos = uris
+        onPickerEnd()
+    }
 
     val deleteOriginalsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
@@ -1502,6 +1513,7 @@ private fun PrivacyFolderScreen(
 
         Button(
             onClick = {
+                onPickerStart()
                 photoPicker.launch(arrayOf("image/*"))
             },
             modifier = Modifier.fillMaxWidth()
@@ -1509,6 +1521,7 @@ private fun PrivacyFolderScreen(
 
         Button(
             onClick = {
+                onPickerStart()
                 videoPicker.launch(arrayOf("video/*"))
             },
             modifier = Modifier.fillMaxWidth()
