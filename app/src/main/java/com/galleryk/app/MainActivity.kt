@@ -350,7 +350,7 @@ MaterialTheme {
         color = Color(0xFF101114)  
     ) {  
         if (privacyFolderScreen) {
-            PrivacyFolderBasicScreen(onBack = { privacyFolderScreen = false })
+            PrivacyFolderScreen(onBack = { privacyFolderScreen = false })
         } else if (  
             selectedIndex >= 0 &&  
             selectedIndex < displayedMedia.size  
@@ -1373,7 +1373,7 @@ Box(
 
 
 @Composable
-private fun PrivacyFolderBasicScreen(onBack: () -> Unit) {
+private fun PrivacyFolderScreen(onBack: () -> Unit) {
     var pickedPhotos by remember { mutableStateOf(listOf<Uri>()) }
     var pickedVideos by remember { mutableStateOf(listOf<Uri>()) }
 
@@ -1413,7 +1413,9 @@ private fun PrivacyFolderBasicScreen(onBack: () -> Unit) {
         Button(
             onClick = {
                 photoPicker.launch(
-                    ActivityResultContracts.PickMultipleVisualMedia.ImageOnly
+                    androidx.activity.result.PickVisualMediaRequest(
+                        ActivityResultContracts.PickVisualMedia.ImageOnly
+                    )
                 )
             },
             modifier = Modifier.fillMaxWidth()
@@ -1424,7 +1426,9 @@ private fun PrivacyFolderBasicScreen(onBack: () -> Unit) {
         Button(
             onClick = {
                 videoPicker.launch(
-                    ActivityResultContracts.PickMultipleVisualMedia.VideoOnly
+                    androidx.activity.result.PickVisualMediaRequest(
+                        ActivityResultContracts.PickVisualMedia.VideoOnly
+                    )
                 )
             },
             modifier = Modifier.fillMaxWidth()
