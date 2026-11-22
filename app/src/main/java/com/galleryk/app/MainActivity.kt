@@ -1384,12 +1384,15 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
     var saving by remember { mutableStateOf(false) }
     var savedPhotoCount by remember { mutableIntStateOf(0) }
     var savedVideoCount by remember { mutableIntStateOf(0) }
+    var savedFiles by remember { mutableStateOf(listOf<File>()) }
 
     val privatePhotosDir = remember { File(context.filesDir, "privacy_folder/photos") }
     val privateVideosDir = remember { File(context.filesDir, "privacy_folder/videos") }
     LaunchedEffect(Unit) {
         savedPhotoCount = privatePhotosDir.listFiles()?.count { it.isFile } ?: 0
         savedVideoCount = privateVideosDir.listFiles()?.count { it.isFile } ?: 0
+        savedFiles = ((privatePhotosDir.listFiles()?.filter { it.isFile } ?: emptyList()) +
+            (privateVideosDir.listFiles()?.filter { it.isFile } ?: emptyList())).sortedByDescending { it.lastModified() }
     }
 
     val photoPicker = rememberLauncherForActivityResult(
@@ -1489,6 +1492,8 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
                     }
                     savedPhotoCount += result.first
                     savedVideoCount += result.second
+                    savedFiles = ((privatePhotosDir.listFiles()?.filter { it.isFile } ?: emptyList()) +
+                        (privateVideosDir.listFiles()?.filter { it.isFile } ?: emptyList())).sortedByDescending { it.lastModified() }
                     pickedPhotos = emptyList()
                     pickedVideos = emptyList()
                     saving = false
@@ -1509,18 +1514,41 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
             color = Color(0xFF9ED6A8),
             fontSize = 15.sp
         )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = if (pickedPhotos.isEmpty() && pickedVideos.isEmpty())
-                    "Select photos or videos, then tap Save."
-                else "Your selection is ready to save.",
-                color = Color.Gray
-            )
+        if (pickedPhotos.isNotEmpty() || pickedVideos.isNotEmpty()) {
+            Text("Your selection is ready to save.", color = Color.Gray)
+        }
+
+        Text("Saved Media", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        if (savedFiles.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Text("No saved media yet.", color = Color.Gray)
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                contentPadding = PaddingValues(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(savedFiles, key = { it.absolutePath }) { file ->
+                    val isVideoFile = file.parentFile == privateVideosDir
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF262329)
+                    )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(if (isVideoFile) "▶ VIDEO" else "▣ PHOTO", color = Color.White, fontSize = 14.sp)
+                            Text(file.name, color = Color.LightGray, fontSize = 10.sp, maxLines = 2)
+                        }
+                    }
+                }
+            }
         }
     }
 }
