@@ -1408,6 +1408,7 @@ Box(
 }
 
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun PrivacyFolderScreen(
     onBack: () -> Unit,
