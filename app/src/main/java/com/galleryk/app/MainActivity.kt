@@ -50,7 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
@@ -1863,7 +1862,7 @@ private fun PrivacyPinGate(
                 } else {
                     error = "Set up fingerprint or screen lock in device settings first"
                 }
-            }) { Text("Unlock with device authentication", color = Color(0xFFB98AFF)) }
+            }) { Text("Use fingerprint to unlock 🔐", color = Color(0xFFB98AFF)) }
         }
         listOf("1","2","3","4","5","6","7","8","9","⌫","0","✓").chunked(3).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 5.dp)) {
