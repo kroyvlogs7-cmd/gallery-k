@@ -232,7 +232,10 @@ var selectionMode by remember { mutableStateOf(false) }
 var selectedUris by remember { mutableStateOf(setOf<Uri>()) }  
 var refreshKey by remember { mutableIntStateOf(0) }  
 var privacyFolderScreen by remember { mutableStateOf(false) }
-var privacyFolderItems by remember { mutableStateOf(listOf<String>())
+val privacyFolderPrefs = remember { context.getSharedPreferences("privacy_folder", android.content.Context.MODE_PRIVATE) }
+var privacyFolderItems by remember {
+    mutableStateOf(privacyFolderPrefs.getStringSet("items", emptySet())?.toList() ?: emptyList())
+}
 
 
 val privacyMediaPicker = rememberLauncherForActivityResult(
@@ -252,6 +255,7 @@ val privacyMediaPicker = rememberLauncherForActivityResult(
             context.contentResolver.openInputStream(uri)?.use { input ->
                 destination.outputStream().use { output -> input.copyTo(output) }
                 privacyFolderItems = privacyFolderItems + destination.name
+                privacyFolderPrefs.edit().putStringSet("items", privacyFolderItems.toSet()).apply()
                 added++
             }
         } catch (_: Exception) {
