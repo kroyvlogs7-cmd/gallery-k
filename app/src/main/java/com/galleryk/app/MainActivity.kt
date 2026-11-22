@@ -246,7 +246,7 @@ var storedPinHash by remember { mutableStateOf(pinPrefs.getString("pin_hash", nu
 DisposableEffect(context) {
     val lifecycle = (context as? ComponentActivity)?.lifecycle
     val observer = LifecycleEventObserver { _, event ->
-        if (event == Lifecycle.Event.ON_STOP && !privacyPickerActive) { privacyPinUnlocked = false; privacyPinChanging = false }
+        if (event == Lifecycle.Event.ON_STOP && !privacyPickerActive) { privacyFolderScreen = false; privacyPinUnlocked = false; privacyPinChanging = false }
     }
     lifecycle?.addObserver(observer)
     onDispose { lifecycle?.removeObserver(observer) }
