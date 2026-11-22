@@ -3,6 +3,7 @@ package com.galleryk.app
 import android.Manifest
 import android.app.Activity
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -1425,6 +1426,8 @@ private fun PrivacyFolderScreen(
     var savedFiles by remember { mutableStateOf(listOf<File>()) }
     var previewFile by remember { mutableStateOf<File?>(null) }
     var mediaFilter by remember { mutableStateOf("All") }
+    var selectedPrivateFiles by remember { mutableStateOf(setOf<String>()) }
+
 
     val privatePhotosDir = remember { File(context.filesDir, "privacy_folder/photos") }
     val privateVideosDir = remember { File(context.filesDir, "privacy_folder/videos") }
@@ -1444,6 +1447,50 @@ private fun PrivacyFolderScreen(
         savedPhotoCount = photos.size
         savedVideoCount = videos.size
         savedFiles = (photos + videos).sortedByDescending { it.lastModified() }
+    }
+
+    suspend fun restorePrivateFile(file: File): Boolean = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@withContext false
+        val isVideo = file.parentFile == privateVideosDir
+        val collection = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val mime = if (isVideo) {
+            when (file.extension.lowercase()) {
+                "3gp" -> "video/3gpp"
+                "webm" -> "video/webm"
+                "mkv" -> "video/x-matroska"
+                else -> "video/mp4"
+            }
+        } else {
+            when (file.extension.lowercase()) {
+                "png" -> "image/png"
+                "webp" -> "image/webp"
+                "heic", "heif" -> "image/heic"
+                "gif" -> "image/gif"
+                else -> "image/jpeg"
+            }
+        }
+        val folder = if (isVideo) "Movies/Gallery K Restored" else "Pictures/Gallery K Restored"
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, folder)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val resolver = context.contentResolver
+        val newUri = resolver.insert(collection, values) ?: return@withContext false
+        try {
+            resolver.openOutputStream(newUri)?.use { output ->
+                file.inputStream().use { input -> input.copyTo(output) }
+            } ?: throw IllegalStateException("Could not open output")
+            val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+            resolver.update(newUri, ready, null, null)
+            file.delete()
+            true
+        } catch (_: Exception) {
+            try { resolver.delete(newUri, null, null) } catch (_: Exception) { }
+            false
+        }
     }
 
     LaunchedEffect(Unit) { refreshSavedFiles() }
@@ -1634,6 +1681,34 @@ private fun PrivacyFolderScreen(
             Text("Your selection is ready to save.", color = Color.Gray)
         }
 
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            Text("Unhide is supported on Android 10 and newer.", color = Color.Gray, fontSize = 13.sp)
+        }
+        if (selectedPrivateFiles.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { selectedPrivateFiles = emptySet() },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Cancel Selection") }
+                Button(
+                    onClick = {
+                        val selected = savedFiles.filter { it.absolutePath in selectedPrivateFiles }
+                        scope.launch {
+                            var restored = 0
+                            selected.forEach { file ->
+                                if (restorePrivateFile(file)) restored++
+                            }
+                            selectedPrivateFiles = emptySet()
+                            refreshSavedFiles()
+                            Toast.makeText(context, "Restored $restored of ${selected.size} files to Gallery", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Unhide (${selectedPrivateFiles.size})") }
+            }
+        }
+
         Text("Saved Media", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("All", "Photos", "Videos").forEach { filter ->
@@ -1695,7 +1770,18 @@ private fun PrivacyFolderScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(1f)
-                            .clickable { previewFile = file },
+                            .combinedClickable(
+                                onClick = {
+                                    if (selectedPrivateFiles.isNotEmpty()) {
+                                        selectedPrivateFiles = if (file.absolutePath in selectedPrivateFiles) {
+                                            selectedPrivateFiles - file.absolutePath
+                                        } else selectedPrivateFiles + file.absolutePath
+                                    } else previewFile = file
+                                },
+                                onLongClick = {
+                                    selectedPrivateFiles = selectedPrivateFiles + file.absolutePath
+                                }
+                            ),
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF262329))
                     ) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1718,6 +1804,18 @@ private fun PrivacyFolderScreen(
                                         .background(Color(0x99000000), RoundedCornerShape(30))
                                         .padding(8.dp)
                                 )
+                            }
+                            if (file.absolutePath in selectedPrivateFiles) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(6.dp)
+                                        .size(26.dp)
+                                        .background(Color(0xFF6550A4), RoundedCornerShape(50)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("✓", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
