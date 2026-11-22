@@ -1409,6 +1409,16 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
         ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris -> pickedVideos = uris }
 
+    val deleteOriginalsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            Toast.makeText(context, "Original media removed from Gallery", Toast.LENGTH_LONG).show()
+        } else {
+            Toast.makeText(context, "Private copies saved. Originals were kept in Gallery.", Toast.LENGTH_LONG).show()
+        }
+    }
+
     val openFile = previewFile
     if (openFile != null) {
         val uri = Uri.fromFile(openFile)
@@ -1483,6 +1493,7 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
                     val result = withContext(Dispatchers.IO) {
                         var photoSaved = 0
                         var videoSaved = 0
+                        val copiedUris = mutableListOf<Uri>()
                         try {
                             privatePhotosDir.mkdirs()
                             privateVideosDir.mkdirs()
@@ -1494,7 +1505,10 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
                                 context.contentResolver.openInputStream(uri)?.use { input ->
                                     target.outputStream().use { output -> input.copyTo(output) }
                                 }
-                                if (target.exists() && target.length() > 0) photoSaved++ else target.delete()
+                                if (target.exists() && target.length() > 0) {
+                                    photoSaved++
+                                    copiedUris.add(uri)
+                                } else target.delete()
                             }
                             videos.forEach { uri ->
                                 val ext = context.contentResolver.getType(uri)
@@ -1504,10 +1518,13 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
                                 context.contentResolver.openInputStream(uri)?.use { input ->
                                     target.outputStream().use { output -> input.copyTo(output) }
                                 }
-                                if (target.exists() && target.length() > 0) videoSaved++ else target.delete()
+                                if (target.exists() && target.length() > 0) {
+                                    videoSaved++
+                                    copiedUris.add(uri)
+                                } else target.delete()
                             }
                         } catch (_: Exception) { }
-                        photoSaved to videoSaved
+                        Pair(photoSaved to videoSaved, copiedUris.toList())
                     }
                     refreshSavedFiles()
                     pickedPhotos = emptyList()
@@ -1515,9 +1532,37 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
                     saving = false
                     Toast.makeText(
                         context,
-                        "Saved ${result.first} photos and ${result.second} videos privately",
+                        "Saved ${result.first.first} photos and ${result.first.second} videos privately",
                         Toast.LENGTH_LONG
                     ).show()
+
+                    // Delete originals only after a private copy was successfully created,
+                    // and only after the user confirms Android's system delete dialog.
+                    val copiedSuccessfully = result.second
+                    if (copiedSuccessfully.isNotEmpty()) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            try {
+                                val deleteRequest = MediaStore.createDeleteRequest(
+                                    context.contentResolver, copiedSuccessfully
+                                )
+                                deleteOriginalsLauncher.launch(
+                                    IntentSenderRequest.Builder(deleteRequest.intentSender).build()
+                                )
+                            } catch (_: Exception) {
+                                Toast.makeText(
+                                    context,
+                                    "Private copies saved, but Gallery removal could not be started.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Private copies saved. Android requires a separate delete permission on this version.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
                 }
             },
             enabled = (pickedPhotos.isNotEmpty() || pickedVideos.isNotEmpty()) && !saving,
