@@ -2,9 +2,7 @@ package com.galleryk.app
 
 import android.Manifest
 import android.app.Activity
-import android.hardware.biometrics.BiometricPrompt
-import android.os.CancellationSignal
-import java.util.concurrent.Executor
+import android.app.KeyguardManager
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.pm.PackageManager
@@ -52,7 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
@@ -1837,6 +1834,10 @@ private fun PrivacyPinGate(
     onSuccess: () -> Unit,
     onPinSaved: (String) -> Unit
 ) {
+    val context = LocalContext.current
+    val credentialLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) onSuccess()
+    }
     var input by remember { mutableStateOf("") }
     var firstPin by remember { mutableStateOf("") }
     var stage by remember { mutableStateOf(if (existingHash == null || changeMode) "new" else "unlock") }
@@ -1849,20 +1850,19 @@ private fun PrivacyPinGate(
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { repeat(4) { i -> Box(Modifier.size(16.dp).background(if (input.length > i) Color(0xFF9B59FF) else Color.DarkGray, RoundedCornerShape(50))) } }
         Spacer(Modifier.height(16.dp))
         if (error.isNotBlank()) Text(error, color = Color(0xFFFF6B6B))
-        if (stage == "unlock" && !changeMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val activity = context as? Activity
-            if (activity != null) {
-                TextButton(onClick = {
-                    val executor = ContextCompat.getMainExecutor(context)
-                    val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
-                        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) { onSuccess() }
-                        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) { error = errString.toString() }
-                        override fun onAuthenticationFailed() { error = "Fingerprint not recognized" }
-                    })
-                    val info = BiometricPrompt.PromptInfo.Builder().setTitle("Unlock Privacy Folder")
-                        .setSubtitle("Use your fingerprint or enter PIN").setNegativeButtonText("Use PIN").build()
-                    prompt.authenticate(info)
-                }) { Text("Unlock with fingerprint", color = Color(0xFFB98AFF)) }
+        if (stage == "unlock" && !changeMode) {
+            TextButton(onClick = {
+                val keyguardManager = context.getSystemService(Activity.KEYGUARD_SERVICE) as KeyguardManager
+                if (keyguardManager.isDeviceSecure) {
+                    val intent = keyguardManager.createConfirmDeviceCredentialIntent(
+                        "Unlock Privacy Folder", "Confirm your device lock"
+                    )
+                    if (intent != null) credentialLauncher.launch(intent)
+                    else error = "Device authentication is unavailable"
+                } else {
+                    error = "Set up fingerprint or screen lock in device settings first"
+                }
+            }) { Text("Unlock with device authentication", color = Color(0xFFB98AFF)) }
         }
         listOf("1","2","3","4","5","6","7","8","9","⌫","0","✓").chunked(3).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 5.dp)) {
