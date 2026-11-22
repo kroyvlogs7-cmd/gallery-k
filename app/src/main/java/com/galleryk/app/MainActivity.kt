@@ -1385,15 +1385,20 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
     var savedPhotoCount by remember { mutableIntStateOf(0) }
     var savedVideoCount by remember { mutableIntStateOf(0) }
     var savedFiles by remember { mutableStateOf(listOf<File>()) }
+    var previewFile by remember { mutableStateOf<File?>(null) }
 
     val privatePhotosDir = remember { File(context.filesDir, "privacy_folder/photos") }
     val privateVideosDir = remember { File(context.filesDir, "privacy_folder/videos") }
-    LaunchedEffect(Unit) {
-        savedPhotoCount = privatePhotosDir.listFiles()?.count { it.isFile } ?: 0
-        savedVideoCount = privateVideosDir.listFiles()?.count { it.isFile } ?: 0
-        savedFiles = ((privatePhotosDir.listFiles()?.filter { it.isFile } ?: emptyList()) +
-            (privateVideosDir.listFiles()?.filter { it.isFile } ?: emptyList())).sortedByDescending { it.lastModified() }
+
+    fun refreshSavedFiles() {
+        val photos = privatePhotosDir.listFiles()?.filter { it.isFile } ?: emptyList()
+        val videos = privateVideosDir.listFiles()?.filter { it.isFile } ?: emptyList()
+        savedPhotoCount = photos.size
+        savedVideoCount = videos.size
+        savedFiles = (photos + videos).sortedByDescending { it.lastModified() }
     }
+
+    LaunchedEffect(Unit) { refreshSavedFiles() }
 
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia()
@@ -1402,6 +1407,22 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
     val videoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris -> pickedVideos = uris }
+
+    val openFile = previewFile
+    if (openFile != null) {
+        val uri = Uri.fromFile(openFile)
+        if (openFile.parentFile == privateVideosDir) {
+            VideoPlayer(uri = uri, onBack = { previewFile = null })
+        } else {
+            PhotoViewer(
+                uri = uri,
+                index = 0,
+                total = 1,
+                onBack = { previewFile = null }
+            )
+        }
+        return
+    }
 
     Column(
         modifier = Modifier
@@ -1435,7 +1456,6 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth()
         ) { Text("Add Photos (${pickedPhotos.size})") }
 
-
         Button(
             onClick = {
                 videoPicker.launch(
@@ -1447,13 +1467,11 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth()
         ) { Text("Add Videos (${pickedVideos.size})") }
 
-
         Text(
             text = "Selected: ${pickedPhotos.size} photos • ${pickedVideos.size} videos",
             color = Color.White,
             fontSize = 15.sp
         )
-
 
         Button(
             onClick = {
@@ -1490,10 +1508,7 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
                         } catch (_: Exception) { }
                         photoSaved to videoSaved
                     }
-                    savedPhotoCount += result.first
-                    savedVideoCount += result.second
-                    savedFiles = ((privatePhotosDir.listFiles()?.filter { it.isFile } ?: emptyList()) +
-                        (privateVideosDir.listFiles()?.filter { it.isFile } ?: emptyList())).sortedByDescending { it.lastModified() }
+                    refreshSavedFiles()
                     pickedPhotos = emptyList()
                     pickedVideos = emptyList()
                     saving = false
@@ -1508,12 +1523,12 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth()
         ) { Text(if (saving) "Saving…" else "Save to Privacy Folder") }
 
-
         Text(
             text = "Saved privately: $savedPhotoCount photos • $savedVideoCount videos",
             color = Color(0xFF9ED6A8),
             fontSize = 15.sp
         )
+
         if (pickedPhotos.isNotEmpty() || pickedVideos.isNotEmpty()) {
             Text("Your selection is ready to save.", color = Color.Gray)
         }
@@ -1528,23 +1543,63 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
                 columns = GridCells.Fixed(3),
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 contentPadding = PaddingValues(bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(savedFiles, key = { it.absolutePath }) { file ->
                     val isVideoFile = file.parentFile == privateVideosDir
+                    val bitmap by produceState<Bitmap?>(initialValue = null, key1 = file.absolutePath) {
+                        value = withContext(Dispatchers.IO) {
+                            if (isVideoFile) {
+                                try {
+                                    if (Build.VERSION.SDK_INT >= 29) {
+                                        android.media.ThumbnailUtils.createVideoThumbnail(
+                                            file,
+                                            android.util.Size(360, 360),
+                                            null
+                                        )
+                                    } else {
+                                        android.media.ThumbnailUtils.createVideoThumbnail(
+                                            file.absolutePath,
+                                            MediaStore.Video.Thumbnails.MINI_KIND
+                                        )
+                                    }
+                                } catch (_: Exception) { null }
+                            } else {
+                                try {
+                                    android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                                } catch (_: Exception) { null }
+                            }
+                        }
+                    }
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF262329)
-                    )
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1f)
+                            .clickable { previewFile = file },
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF262329))
                     ) {
-                        Column(
-                            modifier = Modifier.padding(10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(if (isVideoFile) "▶ VIDEO" else "▣ PHOTO", color = Color.White, fontSize = 14.sp)
-                            Text(file.name, color = Color.LightGray, fontSize = 10.sp, maxLines = 2)
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            if (bitmap != null) {
+                                Image(
+                                    bitmap = bitmap!!.asImageBitmap(),
+                                    contentDescription = if (isVideoFile) "Private video thumbnail" else "Private photo",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Text(if (isVideoFile) "▶ VIDEO" else "PHOTO", color = Color.White)
+                            }
+                            if (isVideoFile) {
+                                Text(
+                                    "▶",
+                                    color = Color.White,
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .background(Color(0x99000000), RoundedCornerShape(30))
+                                        .padding(8.dp)
+                                )
+                            }
                         }
                     }
                 }
