@@ -383,7 +383,6 @@ MaterialTheme {
                     onChangePin = { privacyPinChanging = true; privacyPinUnlocked = false }
                 )
             }
-        } 
         } else if (  
             selectedIndex >= 0 &&  
             selectedIndex < displayedMedia.size  
@@ -670,7 +669,6 @@ MaterialTheme {
         }  
     }  
 }
-
 }
 
 @Composable
@@ -1539,10 +1537,14 @@ private fun PrivacyFolderScreen(
                                     ?.substringAfter("/", "jpg")?.replace("[^A-Za-z0-9]".toRegex(), "")
                                     ?.take(8)?.ifBlank { "jpg" } ?: "jpg"
                                 val target = File(privatePhotosDir, "photo_${System.currentTimeMillis()}_${photoSaved}.$ext")
-                                context.contentResolver.openInputStream(uri)?.use { input ->
-                                    target.outputStream().use { output -> input.copyTo(output) }
-                                }
-                                if (target.exists() && target.length() > 0) {
+                                val copied = try {
+                                    val input = context.contentResolver.openInputStream(uri)
+                                    if (input == null) false else input.use { stream ->
+                                        target.outputStream().use { output -> stream.copyTo(output) }
+                                        target.exists() && target.length() > 0
+                                    }
+                                } catch (_: Exception) { false }
+                                if (copied) {
                                     photoSaved++
                                     toMediaStoreUri(uri)?.let { copiedUris.add(it) }
                                 } else target.delete()
@@ -1552,10 +1554,14 @@ private fun PrivacyFolderScreen(
                                     ?.substringAfter("/", "mp4")?.replace("[^A-Za-z0-9]".toRegex(), "")
                                     ?.take(8)?.ifBlank { "mp4" } ?: "mp4"
                                 val target = File(privateVideosDir, "video_${System.currentTimeMillis()}_${videoSaved}.$ext")
-                                context.contentResolver.openInputStream(uri)?.use { input ->
-                                    target.outputStream().use { output -> input.copyTo(output) }
-                                }
-                                if (target.exists() && target.length() > 0) {
+                                val copied = try {
+                                    val input = context.contentResolver.openInputStream(uri)
+                                    if (input == null) false else input.use { stream ->
+                                        target.outputStream().use { output -> stream.copyTo(output) }
+                                        target.exists() && target.length() > 0
+                                    }
+                                } catch (_: Exception) { false }
+                                if (copied) {
                                     videoSaved++
                                     toMediaStoreUri(uri)?.let { copiedUris.add(it) }
                                 } else target.delete()
@@ -1730,7 +1736,7 @@ private fun PrivacyPinGate(
 ) {
     var input by remember { mutableStateOf("") }
     var firstPin by remember { mutableStateOf("") }
-    var stage by remember { mutableStateOf(if (existingHash == null || changeMode) "new" else "unlock")
+    var stage by remember { mutableStateOf(if (existingHash == null || changeMode) "new" else "unlock") }
     var error by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().background(Color.Black).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Privacy Folder", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
