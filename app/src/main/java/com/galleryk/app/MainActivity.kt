@@ -1386,6 +1386,7 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
     var savedVideoCount by remember { mutableIntStateOf(0) }
     var savedFiles by remember { mutableStateOf(listOf<File>()) }
     var previewFile by remember { mutableStateOf<File?>(null) }
+    var mediaFilter by remember { mutableStateOf("All") }
 
     val privatePhotosDir = remember { File(context.filesDir, "privacy_folder/photos") }
     val privateVideosDir = remember { File(context.filesDir, "privacy_folder/videos") }
@@ -1534,7 +1535,25 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
         }
 
         Text("Saved Media", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        if (savedFiles.isEmpty()) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("All", "Photos", "Videos").forEach { filter ->
+                Button(
+                    onClick = { mediaFilter = filter },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (mediaFilter == filter) Color(0xFF6550A4) else Color(0xFF29262D)
+                    )
+                ) { Text(filter) }
+            }
+        }
+        val filteredFiles = savedFiles.filter { file ->
+            when (mediaFilter) {
+                "Photos" -> file.parentFile == privatePhotosDir
+                "Videos" -> file.parentFile == privateVideosDir
+                else -> true
+            }
+        }
+        if (filteredFiles.isEmpty()) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 Text("No saved media yet.", color = Color.Gray)
             }
@@ -1546,7 +1565,7 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items(savedFiles, key = { it.absolutePath }) { file ->
+                items(filteredFiles, key = { it.absolutePath }) { file ->
                     val isVideoFile = file.parentFile == privateVideosDir
                     val bitmap by produceState<Bitmap?>(initialValue = null, key1 = file.absolutePath) {
                         value = withContext(Dispatchers.IO) {
