@@ -56,6 +56,9 @@ import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import java.io.File
 
 data class GalleryMedia(
 val uri: Uri,
@@ -1374,8 +1377,20 @@ Box(
 
 @Composable
 private fun PrivacyFolderScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var pickedPhotos by remember { mutableStateOf(listOf<Uri>()) }
     var pickedVideos by remember { mutableStateOf(listOf<Uri>()) }
+    var saving by remember { mutableStateOf(false) }
+    var savedPhotoCount by remember { mutableIntStateOf(0) }
+    var savedVideoCount by remember { mutableIntStateOf(0) }
+
+    val privatePhotosDir = remember { File(context.filesDir, "privacy_folder/photos") }
+    val privateVideosDir = remember { File(context.filesDir, "privacy_folder/videos") }
+    LaunchedEffect(Unit) {
+        savedPhotoCount = privatePhotosDir.listFiles()?.count { it.isFile } ?: 0
+        savedVideoCount = privateVideosDir.listFiles()?.count { it.isFile } ?: 0
+    }
 
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia()
@@ -1404,11 +1419,7 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
             fontSize = 26.sp,
             fontWeight = FontWeight.Bold
         )
-        Text(
-            text = "Choose photos and videos",
-            color = Color.LightGray,
-            fontSize = 16.sp
-        )
+        Text("Choose photos and videos", color = Color.LightGray, fontSize = 16.sp)
 
         Button(
             onClick = {
@@ -1419,9 +1430,8 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
                 )
             },
             modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Add Photos (${pickedPhotos.size})")
-        }
+        ) { Text("Add Photos (${pickedPhotos.size})") }
+
 
         Button(
             onClick = {
@@ -1432,9 +1442,8 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
                 )
             },
             modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Add Videos (${pickedVideos.size})")
-        }
+        ) { Text("Add Videos (${pickedVideos.size})") }
+
 
         Text(
             text = "Selected: ${pickedPhotos.size} photos • ${pickedVideos.size} videos",
@@ -1442,6 +1451,64 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
             fontSize = 15.sp
         )
 
+
+        Button(
+            onClick = {
+                scope.launch {
+                    saving = true
+                    val photos = pickedPhotos.toList()
+                    val videos = pickedVideos.toList()
+                    val result = withContext(Dispatchers.IO) {
+                        var photoSaved = 0
+                        var videoSaved = 0
+                        try {
+                            privatePhotosDir.mkdirs()
+                            privateVideosDir.mkdirs()
+                            photos.forEach { uri ->
+                                val ext = context.contentResolver.getType(uri)
+                                    ?.substringAfter("/", "jpg")?.replace("[^A-Za-z0-9]".toRegex(), "")
+                                    ?.take(8)?.ifBlank { "jpg" } ?: "jpg"
+                                val target = File(privatePhotosDir, "photo_${System.currentTimeMillis()}_${photoSaved}.$ext")
+                                context.contentResolver.openInputStream(uri)?.use { input ->
+                                    target.outputStream().use { output -> input.copyTo(output) }
+                                }
+                                if (target.exists() && target.length() > 0) photoSaved++ else target.delete()
+                            }
+                            videos.forEach { uri ->
+                                val ext = context.contentResolver.getType(uri)
+                                    ?.substringAfter("/", "mp4")?.replace("[^A-Za-z0-9]".toRegex(), "")
+                                    ?.take(8)?.ifBlank { "mp4" } ?: "mp4"
+                                val target = File(privateVideosDir, "video_${System.currentTimeMillis()}_${videoSaved}.$ext")
+                                context.contentResolver.openInputStream(uri)?.use { input ->
+                                    target.outputStream().use { output -> input.copyTo(output) }
+                                }
+                                if (target.exists() && target.length() > 0) videoSaved++ else target.delete()
+                            }
+                        } catch (_: Exception) { }
+                        photoSaved to videoSaved
+                    }
+                    savedPhotoCount += result.first
+                    savedVideoCount += result.second
+                    pickedPhotos = emptyList()
+                    pickedVideos = emptyList()
+                    saving = false
+                    Toast.makeText(
+                        context,
+                        "Saved ${result.first} photos and ${result.second} videos privately",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            },
+            enabled = (pickedPhotos.isNotEmpty() || pickedVideos.isNotEmpty()) && !saving,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text(if (saving) "Saving…" else "Save to Privacy Folder") }
+
+
+        Text(
+            text = "Saved privately: $savedPhotoCount photos • $savedVideoCount videos",
+            color = Color(0xFF9ED6A8),
+            fontSize = 15.sp
+        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1450,8 +1517,8 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
         ) {
             Text(
                 text = if (pickedPhotos.isEmpty() && pickedVideos.isEmpty())
-                    "No media selected yet."
-                else "Selection ready. Moving media into the private folder is the next step.",
+                    "Select photos or videos, then tap Save."
+                else "Your selection is ready to save.",
                 color = Color.Gray
             )
         }
