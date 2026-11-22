@@ -353,7 +353,10 @@ MaterialTheme {
         color = Color(0xFF101114)  
     ) {  
         if (privacyFolderScreen) {
-            PrivacyFolderScreen(onBack = { privacyFolderScreen = false })
+            PrivacyFolderScreen(
+                onBack = { privacyFolderScreen = false },
+                onOriginalsDeleted = { refreshKey++ }
+            )
         } else if (  
             selectedIndex >= 0 &&  
             selectedIndex < displayedMedia.size  
@@ -1376,7 +1379,10 @@ Box(
 
 
 @Composable
-private fun PrivacyFolderScreen(onBack: () -> Unit) {
+private fun PrivacyFolderScreen(
+    onBack: () -> Unit,
+    onOriginalsDeleted: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pickedPhotos by remember { mutableStateOf(listOf<Uri>()) }
@@ -1413,6 +1419,7 @@ private fun PrivacyFolderScreen(onBack: () -> Unit) {
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
+            onOriginalsDeleted()
             Toast.makeText(context, "Original media removed from Gallery", Toast.LENGTH_LONG).show()
         } else {
             Toast.makeText(context, "Private copies saved. Originals were kept in Gallery.", Toast.LENGTH_LONG).show()
