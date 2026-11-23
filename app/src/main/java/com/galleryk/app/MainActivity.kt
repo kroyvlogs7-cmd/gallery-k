@@ -700,14 +700,18 @@ MaterialTheme {
                                                 lastY = position.y
                                                 val edgeZone = 100.dp.toPx()
                                                 if (position.y < edgeZone) {
-                                                    selectionGridState.scrollBy(-35f)
-                                                    // Hit-test again after the grid has moved so the item now
-                                                    // beneath the stationary finger is also selected.
-                                                    selectAt(position.x, position.y)
+                                                    launch {
+                                                        selectionGridState.scrollBy(-35f)
+                                                        // Hit-test again after scrolling so the item now
+                                                        // beneath the stationary finger is also selected.
+                                                        selectAt(position.x, position.y)
+                                                    }
                                                 } else if (position.y > size.height - edgeZone) {
-                                                    selectionGridState.scrollBy(35f)
-                                                    // Select the newly revealed thumbnail under the finger.
-                                                    selectAt(position.x, position.y)
+                                                    launch {
+                                                        selectionGridState.scrollBy(35f)
+                                                        // Select the newly revealed thumbnail under the finger.
+                                                        selectAt(position.x, position.y)
+                                                    }
                                                 }
                                             }
                                         )
