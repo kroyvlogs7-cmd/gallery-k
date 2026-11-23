@@ -882,25 +882,63 @@ private fun SelectedMediaPreview(
     onBack: () -> Unit
 ) {
     val current = mediaItems[index]
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(index, mediaItems.size) {
+                var dragTotal = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { dragTotal = 0f },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        dragTotal += dragAmount
+                    },
+                    onDragEnd = {
+                        val threshold = 60.dp.toPx()
+                        if (dragTotal < -threshold && index < mediaItems.lastIndex) {
+                            onIndexChange(index + 1)
+                        } else if (dragTotal > threshold && index > 0) {
+                            onIndexChange(index - 1)
+                        }
+                    },
+                    onDragCancel = { dragTotal = 0f }
+                )
+            }
+    ) {
         if (current.isVideo) {
-            VideoPlayer(uri = current.uri, onBack = onBack)
+            VideoPlayer(uri = current.uri, onBack = onBack, enableSeekGestures = false)
         } else {
-            PhotoViewer(uri = current.uri, index = index, total = mediaItems.size, onBack = onBack)
+            PhotoViewer(
+                uri = current.uri,
+                index = index,
+                total = mediaItems.size,
+                onBack = onBack,
+                showHeader = false
+            )
         }
-        Row(
-            modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter)
-                .background(Color(0xCC101114)).padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+
+        Text(
+            text = "${if (current.isVideo) "Video" else "Photo"} ${index + 1} / ${mediaItems.size}",
+            color = Color.White,
+            fontSize = 17.sp,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .background(Color(0x66000000), RoundedCornerShape(8.dp))
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        )
+
+        Button(
+            onClick = onBack,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF315C91))
         ) {
-            OutlinedButton(onClick = { if (index > 0) onIndexChange(index - 1) }, enabled = index > 0, modifier = Modifier.weight(1f)) {
-                Text("Previous")
-            }
-            Text("${index + 1} / ${mediaItems.size}", color = Color.White)
-            OutlinedButton(onClick = { if (index < mediaItems.lastIndex) onIndexChange(index + 1) }, enabled = index < mediaItems.lastIndex, modifier = Modifier.weight(1f)) {
-                Text("Next")
-            }
+            Text("Back", color = Color.White)
         }
     }
 }
@@ -908,83 +946,84 @@ private fun SelectedMediaPreview(
 
 @Composable
 private fun PhotoViewer(
-uri: Uri,
-index: Int,
-total: Int,
-onBack: () -> Unit
+    uri: Uri,
+    index: Int,
+    total: Int,
+    onBack: () -> Unit,
+    showHeader: Boolean = true
 ) {
-val context = LocalContext.current
+    val context = LocalContext.current
 
-var bitmap by remember(uri) {
-    mutableStateOf<Bitmap?>(null)
-}
+    var bitmap by remember(uri) {
+        mutableStateOf<Bitmap?>(null)
+    }
 
-LaunchedEffect(uri) {
-    bitmap = withContext(Dispatchers.IO) {
-        try {
-            context.contentResolver
-                .openInputStream(uri)?.use {
-                    android.graphics.BitmapFactory.decodeStream(it)
-                }
-        } catch (_: Exception) {
-            null
+    LaunchedEffect(uri) {
+        bitmap = withContext(Dispatchers.IO) {
+            try {
+                context.contentResolver
+                    .openInputStream(uri)?.use {
+                        android.graphics.BitmapFactory.decodeStream(it)
+                    }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = "Full photo",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+        } else {
+            CircularProgressIndicator(
+                color = Color.White,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+
+        if (showHeader) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "‹",
+                    color = Color.White,
+                    fontSize = 34.sp,
+                    modifier = Modifier.clickable(onClick = onBack)
+                )
+
+                Spacer(Modifier.width(20.dp))
+
+                Text(
+                    "Photo ${index + 1} / $total",
+                    color = Color.White,
+                    fontSize = 17.sp
+                )
+            }
         }
     }
 }
 
 
-Box(
-    Modifier
-        .fillMaxSize()
-        .background(Color.Black)
-) {
-    if (bitmap != null) {
-        Image(
-            bitmap = bitmap!!.asImageBitmap(),
-            contentDescription = "Full photo",
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Fit
-        )
-    } else {
-        CircularProgressIndicator(
-            color = Color.White,
-            modifier = Modifier.align(Alignment.Center)
-        )
-    }
-
-
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .align(Alignment.TopStart)
-            .statusBarsPadding()
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            "‹",
-            color = Color.White,
-            fontSize = 34.sp,
-            modifier = Modifier.clickable(onClick = onBack)
-        )
-
-        Spacer(Modifier.width(20.dp))
-
-        Text(
-            "Photo ${index + 1} / $total",
-            color = Color.White,
-            fontSize = 17.sp
-        )
-    }
-}
-
-
-}
-
 @Composable
 private fun VideoPlayer(
 uri: Uri,
-onBack: () -> Unit
+onBack: () -> Unit,
+enableSeekGestures: Boolean = true
 ) {
 val context = LocalContext.current
 val activity = remember(context) {
@@ -1162,7 +1201,9 @@ Box(
                     }  
                 )  
             }  
-            .pointerInput(exoPlayer, density) {  
+            .pointerInput(exoPlayer, density, enableSeekGestures) {
+                if (enableSeekGestures) {
+  
                 var startPosition = 0L  
                 var dragDistancePx = 0f  
 
@@ -1194,7 +1235,9 @@ Box(
                         sliderPosition = targetPosition.toFloat()  
                     }  
                 )  
-            }  
+            
+                }
+            }
             .pointerInput(exoPlayer, density, activity) {  
                 var brightnessSide = false  
                 var startBrightness = 0.5f  
