@@ -239,7 +239,7 @@ var selectionMode by remember { mutableStateOf(false) }
 var selectedUris by remember { mutableStateOf(setOf<Uri>()) }  
 var selectedPreviewMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
 var selectedPreviewIndex by remember { mutableIntStateOf(0) }
-var refreshKey by remember { mutableIntStateOf(0)  
+var refreshKey by remember { mutableIntStateOf(0) }  
 var privacyFolderScreen by remember { mutableStateOf(false) }
 var privacyPinUnlocked by remember { mutableStateOf(false) }
 var privacyPinChanging by remember { mutableStateOf(false) }
