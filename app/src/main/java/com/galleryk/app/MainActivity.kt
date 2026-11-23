@@ -244,6 +244,7 @@ var privacyPinChanging by remember { mutableStateOf(false) }
 var privacyPickerActive by remember { mutableStateOf(false) }
 val pinPrefs = remember { context.getSharedPreferences("gallery_k_privacy_pin", android.content.Context.MODE_PRIVATE) }
 var storedPinHash by remember { mutableStateOf(pinPrefs.getString("pin_hash", null)) }
+var fingerprintEnabled by remember { mutableStateOf(pinPrefs.getBoolean("fingerprint_enabled", true)) }
 DisposableEffect(context) {
     val lifecycle = (context as? ComponentActivity)?.lifecycle
     val observer = LifecycleEventObserver { _, event ->
@@ -377,7 +378,8 @@ MaterialTheme {
                     changeMode = privacyPinChanging,
                     onCancelChange = { privacyPinChanging = false },
                     onSuccess = { privacyPinUnlocked = true; privacyPinChanging = false },
-                    onPinSaved = { hash -> pinPrefs.edit().putString("pin_hash", hash).apply(); storedPinHash = hash; privacyPinUnlocked = true; privacyPinChanging = false }
+                    onPinSaved = { hash -> pinPrefs.edit().putString("pin_hash", hash).apply(); storedPinHash = hash; privacyPinUnlocked = true; privacyPinChanging = false },
+                    fingerprintEnabled = fingerprintEnabled
                 )
             } else {
                 PrivacyFolderScreen(
@@ -385,7 +387,9 @@ MaterialTheme {
                     onOriginalsDeleted = { refreshKey++ },
                     onChangePin = { privacyPinChanging = true; privacyPinUnlocked = false },
                     onPickerStart = { privacyPickerActive = true },
-                    onPickerEnd = { privacyPickerActive = false }
+                    onPickerEnd = { privacyPickerActive = false },
+                    fingerprintEnabled = fingerprintEnabled,
+                    onFingerprintEnabledChange = { enabled -> fingerprintEnabled = enabled; pinPrefs.edit().putBoolean("fingerprint_enabled", enabled).apply() }
                 )
             }
         } 
@@ -1416,7 +1420,9 @@ private fun PrivacyFolderScreen(
     onOriginalsDeleted: () -> Unit,
     onChangePin: () -> Unit,
     onPickerStart: () -> Unit,
-    onPickerEnd: () -> Unit
+    onPickerEnd: () -> Unit,
+    fingerprintEnabled: Boolean,
+    onFingerprintEnabledChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1429,7 +1435,7 @@ private fun PrivacyFolderScreen(
     var previewFile by remember { mutableStateOf<File?>(null) }
     var mediaFilter by remember { mutableStateOf("All") }
     var selectedPrivateFiles by remember { mutableStateOf(setOf<String>()) }
-
+    var privacyMenuExpanded by remember { mutableStateOf(false) }
 
     val privatePhotosDir = remember { File(context.filesDir, "privacy_folder/photos") }
     val privateVideosDir = remember { File(context.filesDir, "privacy_folder/videos") }
@@ -1522,23 +1528,6 @@ private fun PrivacyFolderScreen(
         }
     }
 
-    fun launchOriginalDeleteRequest(uris: List<Uri>) {
-        if (uris.isEmpty()) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                val deleteRequest = MediaStore.createDeleteRequest(context.contentResolver, uris)
-                deleteOriginalsLauncher.launch(IntentSenderRequest.Builder(deleteRequest.intentSender).build())
-            } catch (_: Exception) {
-                Toast.makeText(context, "Private copies saved, but Gallery removal could not be started.", Toast.LENGTH_LONG).show()
-            }
-        } else {
-            Toast.makeText(context, "Private copies saved. Android requires a separate delete permission on this version.", Toast.LENGTH_LONG).show()
-        }
-    }
-
-
-
-
     val openFile = previewFile
     if (openFile != null) {
         val uri = Uri.fromFile(openFile)
@@ -1568,12 +1557,31 @@ private fun PrivacyFolderScreen(
             fontSize = 20.sp,
             modifier = Modifier.clickable(onClick = onBack)
         )
-        Text(
-            text = "Privacy Folder",
-            color = Color.White,
-            fontSize = 26.sp,
-            fontWeight = FontWeight.Bold
-        )
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Privacy Folder", color = Color.White, fontSize = 26.sp,
+                fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
+            )
+            Box {
+                IconButton(onClick = { privacyMenuExpanded = true }) {
+                    Text("⋮", color = Color.White, fontSize = 26.sp)
+                }
+                DropdownMenu(expanded = privacyMenuExpanded, onDismissRequest = { privacyMenuExpanded = false }) {
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Fingerprint Unlock")
+                                    Text(if (fingerprintEnabled) "Enabled" else "Disabled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(checked = fingerprintEnabled, onCheckedChange = { enabled -> onFingerprintEnabledChange(enabled); privacyMenuExpanded = false })
+                            }
+                        },
+                        onClick = { onFingerprintEnabledChange(!fingerprintEnabled); privacyMenuExpanded = false }
+                    )
+                }
+            }
+        }
         Text("Choose photos and videos", color = Color.LightGray, fontSize = 16.sp)
         OutlinedButton(onClick = onChangePin, modifier = Modifier.fillMaxWidth()) { Text("Change PIN") }
 
@@ -1651,10 +1659,32 @@ private fun PrivacyFolderScreen(
                         Toast.LENGTH_LONG
                     ).show()
 
-                    // Originals are offered for removal only after private copies were saved.
+                    // Delete originals only after a private copy was successfully created,
+                    // and only after the user confirms Android's system delete dialog.
                     val copiedSuccessfully = result.second.distinct()
                     if (copiedSuccessfully.isNotEmpty()) {
-                        launchOriginalDeleteRequest(copiedSuccessfully)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            try {
+                                val deleteRequest = MediaStore.createDeleteRequest(
+                                    context.contentResolver, copiedSuccessfully
+                                )
+                                deleteOriginalsLauncher.launch(
+                                    IntentSenderRequest.Builder(deleteRequest.intentSender).build()
+                                )
+                            } catch (_: Exception) {
+                                Toast.makeText(
+                                    context,
+                                    "Private copies saved, but Gallery removal could not be started.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Private copies saved. Android requires a separate delete permission on this version.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     } else if (result.first.first + result.first.second > 0) {
                         Toast.makeText(
                             context,
@@ -1833,7 +1863,8 @@ private fun PrivacyPinGate(
     changeMode: Boolean,
     onCancelChange: () -> Unit,
     onSuccess: () -> Unit,
-    onPinSaved: (String) -> Unit
+    onPinSaved: (String) -> Unit,
+    fingerprintEnabled: Boolean
 ) {
     val context = LocalContext.current
     val credentialLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -1851,18 +1882,13 @@ private fun PrivacyPinGate(
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { repeat(4) { i -> Box(Modifier.size(16.dp).background(if (input.length > i) Color(0xFF9B59FF) else Color.DarkGray, RoundedCornerShape(50))) } }
         Spacer(Modifier.height(16.dp))
         if (error.isNotBlank()) Text(error, color = Color(0xFFFF6B6B))
-        if (stage == "unlock" && !changeMode) {
+        if (fingerprintEnabled && stage == "unlock" && !changeMode) {
             TextButton(onClick = {
-                val keyguardManager = context.getSystemService(Activity.KEYGUARD_SERVICE) as KeyguardManager
-                if (keyguardManager.isDeviceSecure) {
-                    val intent = keyguardManager.createConfirmDeviceCredentialIntent(
-                        "Unlock Privacy Folder", "Confirm your device lock"
-                    )
-                    if (intent != null) credentialLauncher.launch(intent)
-                    else error = "Device authentication is unavailable"
-                } else {
-                    error = "Set up fingerprint or screen lock in device settings first"
-                }
+                val km = context.getSystemService(Activity.KEYGUARD_SERVICE) as KeyguardManager
+                if (km.isDeviceSecure) {
+                    val promptIntent = km.createConfirmDeviceCredentialIntent("Unlock Privacy Folder", "Confirm your device lock")
+                    if (promptIntent != null) credentialLauncher.launch(promptIntent) else error = "Device authentication is unavailable"
+                } else error = "Set up fingerprint or screen lock in device settings first"
             }) { Text("Use fingerprint to unlock 🔐", color = Color(0xFFB98AFF)) }
         }
         listOf("1","2","3","4","5","6","7","8","9","⌫","0","✓").chunked(3).forEach { row ->
