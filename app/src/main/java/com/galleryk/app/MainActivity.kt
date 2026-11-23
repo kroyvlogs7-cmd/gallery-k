@@ -702,14 +702,14 @@ MaterialTheme {
                                                 val edgeZone = 100.dp.toPx()
                                                 if (position.y < edgeZone) {
                                                     selectionScope.launch {
-                                                        selectionGridState.scrollBy(-35f)
+                                                        selectionGridState.scrollBy(-70f)
                                                         // Hit-test again after scrolling so the item now
                                                         // beneath the stationary finger is also selected.
                                                         selectAt(position.x, position.y)
                                                     }
                                                 } else if (position.y > size.height - edgeZone) {
                                                     selectionScope.launch {
-                                                        selectionGridState.scrollBy(35f)
+                                                        selectionGridState.scrollBy(70f)
                                                         // Select the newly revealed thumbnail under the finger.
                                                         selectAt(position.x, position.y)
                                                     }
@@ -1916,9 +1916,66 @@ private fun PrivacyFolderScreen(
                 Text("No saved media yet.", color = Color.Gray)
             }
         } else {
+            val latestPrivateSelected by rememberUpdatedState(selectedPrivateFiles)
+            val privateGridState = rememberLazyGridState()
+            val privateSelectionScope = rememberCoroutineScope()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .pointerInput(filteredFiles) {
+                        var lastX = 0f
+                        var lastY = 0f
+                        fun selectPrivateAt(x: Float, y: Float) {
+                            val hit = privateGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                                x >= info.offset.x && x < info.offset.x + info.size.width &&
+                                y >= info.offset.y && y < info.offset.y + info.size.height
+                            }
+                            hit?.let { info ->
+                                filteredFiles.getOrNull(info.index)?.let { item ->
+                                    selectedPrivateFiles = latestPrivateSelected + item.absolutePath
+                                }
+                            }
+                        }
+                        detectDragGestures(
+                            onDragStart = { start ->
+                                lastX = start.x
+                                lastY = start.y
+                                selectPrivateAt(start.x, start.y)
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val pos = change.position
+                                val dx = pos.x - lastX
+                                val dy = pos.y - lastY
+                                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                                val steps = kotlin.math.ceil(distance / 12f).toInt().coerceAtLeast(1)
+                                for (step in 1..steps) {
+                                    val f = step.toFloat() / steps
+                                    selectPrivateAt(lastX + dx * f, lastY + dy * f)
+                                }
+                                lastX = pos.x
+                                lastY = pos.y
+                                val edge = 100.dp.toPx()
+                                if (pos.y < edge) {
+                                    privateSelectionScope.launch {
+                                        privateGridState.scrollBy(-70f)
+                                        selectPrivateAt(pos.x, pos.y)
+                                    }
+                                } else if (pos.y > size.height - edge) {
+                                    privateSelectionScope.launch {
+                                        privateGridState.scrollBy(70f)
+                                        selectPrivateAt(pos.x, pos.y)
+                                    }
+                                }
+                            }
+                        )
+                    }
+            ) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                state = privateGridState,
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -2003,6 +2060,7 @@ private fun PrivacyFolderScreen(
                         }
                     }
                 }
+            }
             }
         }
     }
