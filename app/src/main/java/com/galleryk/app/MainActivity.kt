@@ -237,7 +237,9 @@ var permissionGranted by remember { mutableStateOf(false) }
 var loading by remember { mutableStateOf(false) }  
 var selectionMode by remember { mutableStateOf(false) }  
 var selectedUris by remember { mutableStateOf(setOf<Uri>()) }  
-var refreshKey by remember { mutableIntStateOf(0) }  
+var selectedPreviewMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
+var selectedPreviewIndex by remember { mutableIntStateOf(0) }
+var refreshKey by remember { mutableIntStateOf(0)  
 var privacyFolderScreen by remember { mutableStateOf(false) }
 var privacyPinUnlocked by remember { mutableStateOf(false) }
 var privacyPinChanging by remember { mutableStateOf(false) }
@@ -349,13 +351,14 @@ fun requestDelete() {
 }  
 
 BackHandler(  
-    enabled = privacyFolderScreen || selectionMode ||  
+    enabled = privacyFolderScreen || selectedPreviewMedia.isNotEmpty() || selectionMode ||  
         selectedIndex >= 0 ||  
         selectedAlbumId != null ||  
         selectedTab != "Photos"  
 ) {  
     when {  
         privacyFolderScreen -> { privacyFolderScreen = false; privacyPinUnlocked = false; privacyPinChanging = false }
+        selectedPreviewMedia.isNotEmpty() -> { selectedPreviewMedia = emptyList(); selectedPreviewIndex = 0 }
         selectionMode -> {  
             selectionMode = false  
             selectedUris = emptySet()  
@@ -393,6 +396,14 @@ MaterialTheme {
                 )
             }
         } 
+        else if (selectedPreviewMedia.isNotEmpty() && selectedPreviewIndex in selectedPreviewMedia.indices) {
+            SelectedMediaPreview(
+                mediaItems = selectedPreviewMedia,
+                index = selectedPreviewIndex,
+                onIndexChange = { selectedPreviewIndex = it },
+                onBack = { selectedPreviewMedia = emptyList(); selectedPreviewIndex = 0 }
+            )
+        }
         else if (  
             selectedIndex >= 0 &&  
             selectedIndex < displayedMedia.size  
@@ -488,6 +499,15 @@ MaterialTheme {
                         horizontalArrangement =  
                             Arrangement.spacedBy(12.dp)  
                     ) {  
+                        OutlinedButton(
+                            modifier = Modifier.weight(1f),
+                            enabled = selectedUris.isNotEmpty(),
+                            onClick = {
+                                selectedPreviewMedia = displayedMedia.filter { it.uri in selectedUris }
+                                selectedPreviewIndex = 0
+                            }
+                        ) { Text("Preview") }
+
                         Button(  
                             modifier = Modifier.weight(1f),  
                             enabled = selectedUris.isNotEmpty(),  
@@ -853,6 +873,38 @@ return if (hours > 0) {
 }
 
 }
+
+@Composable
+private fun SelectedMediaPreview(
+    mediaItems: List<GalleryMedia>,
+    index: Int,
+    onIndexChange: (Int) -> Unit,
+    onBack: () -> Unit
+) {
+    val current = mediaItems[index]
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        if (current.isVideo) {
+            VideoPlayer(uri = current.uri, onBack = onBack)
+        } else {
+            PhotoViewer(uri = current.uri, index = index, total = mediaItems.size, onBack = onBack)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter)
+                .background(Color(0xCC101114)).padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(onClick = { if (index > 0) onIndexChange(index - 1) }, enabled = index > 0, modifier = Modifier.weight(1f)) {
+                Text("Previous")
+            }
+            Text("${index + 1} / ${mediaItems.size}", color = Color.White)
+            OutlinedButton(onClick = { if (index < mediaItems.lastIndex) onIndexChange(index + 1) }, enabled = index < mediaItems.lastIndex, modifier = Modifier.weight(1f)) {
+                Text("Next")
+            }
+        }
+    }
+}
+
 
 @Composable
 private fun PhotoViewer(
