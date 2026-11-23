@@ -710,11 +710,9 @@ MaterialTheme {
                                                 val y = change.position.y
                                                 val dy = y - lastY
                                                 if (dy != 0f) dragDirection = if (dy > 0f) 1 else -1
-                                                val steps = kotlin.math.ceil(kotlin.math.abs(dy) / 4f).toInt().coerceAtLeast(1)
-                                                for ( step in 1..steps) {
-                                                    val fraction = step.toFloat() / steps
-                                                    applyRowAt(lastY + dy * fraction, add = dragDirection > 0)
-                                                }
+                                                // Process the destination row once per pointer event; avoid
+                                                // multiple rapid selection-state updates causing visual flicker.
+                                                applyRowAt(y, add = dragDirection > 0)
                                                 lastY = y
                                                 val edgeZone = 100.dp.toPx()
                                                 edgeDirection = when {
