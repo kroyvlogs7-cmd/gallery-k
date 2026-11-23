@@ -26,12 +26,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -656,42 +658,83 @@ MaterialTheme {
                             )  
                         )  
 
-                        LazyVerticalGrid(  
-                            columns = GridCells.Fixed(3),  
-                            contentPadding = PaddingValues(3.dp),  
-                            modifier = Modifier.fillMaxSize()  
-                        ) {  
-                            items(  
-                                displayedMedia,  
-                                key = { it.uri.toString() }  
-                            ) { media ->  
-                                MediaThumbnail(  
-                                    media = media,  
-                                    selected = media.uri in selectedUris,  
-                                    onClick = {  
-                                        if (selectionMode) {  
-                                            selectedUris =  
-                                                if (media.uri in selectedUris) {  
-                                                    selectedUris - media.uri  
-                                                } else {  
-                                                    selectedUris + media.uri  
-                                                }  
-
-                                            if (selectedUris.isEmpty()) {  
-                                                selectionMode = false  
-                                            }  
-                                        } else {  
-                                            selectedIndex =  
-                                                displayedMedia.indexOf(media)  
-                                        }  
-                                    },  
-                                    onLongClick = {  
-                                        selectionMode = true  
-                                        selectedUris =  
-                                            selectedUris + media.uri  
-                                    }  
-                                )  
-                            }  
+                        val selectionGridState = rememberLazyGridState()
+                        val selectionScope = rememberCoroutineScope()
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(selectionMode, displayedMedia) {
+                                    if (selectionMode) {
+                                        detectDragGestures(
+                                            onDragStart = { start ->
+                                                val item = selectionGridState.layoutInfo.visibleItemsInfo
+                                                    .firstOrNull { info ->
+                                                        start.x >= info.offset.x && start.x < info.offset.x + info.size.width &&
+                                                        start.y >= info.offset.y && start.y < info.offset.y + info.size.height
+                                                    }
+                                                item?.let { info ->
+                                                    displayedMedia.getOrNull(info.index)?.let { media ->
+                                                        selectedUris = selectedUris + media.uri
+                                                    }
+                                                }
+                                            },
+                                            onDrag = { change, _ ->
+                                                change.consume()
+                                                val position = change.position
+                                                val visible = selectionGridState.layoutInfo.visibleItemsInfo
+                                                val hit = visible.firstOrNull { info ->
+                                                    position.x >= info.offset.x && position.x < info.offset.x + info.size.width &&
+                                                    position.y >= info.offset.y && position.y < info.offset.y + info.size.height
+                                                }
+                                                hit?.let { info ->
+                                                    displayedMedia.getOrNull(info.index)?.let { media ->
+                                                        if (media.uri !in selectedUris) selectedUris = selectedUris + media.uri
+                                                    }
+                                                }
+                                                val edgeZone = 100.dp.toPx()
+                                                if (position.y < edgeZone) {
+                                                    selectionScope.launch { selectionGridState.scrollBy(-35f) }
+                                                } else if (position.y > size.height - edgeZone) {
+                                                    selectionScope.launch { selectionGridState.scrollBy(35f) }
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                        ) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(3),
+                                contentPadding = PaddingValues(3.dp),
+                                state = selectionGridState,
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(
+                                    displayedMedia,
+                                    key = { it.uri.toString() }
+                                ) { media ->
+                                    MediaThumbnail(
+                                        media = media,
+                                        selected = media.uri in selectedUris,
+                                        onClick = {
+                                            if (selectionMode) {
+                                                selectedUris =
+                                                    if (media.uri in selectedUris) {
+                                                        selectedUris - media.uri
+                                                    } else {
+                                                        selectedUris + media.uri
+                                                    }
+                                                if (selectedUris.isEmpty()) selectionMode = false
+                                            } else {
+                                                selectedIndex = displayedMedia.indexOf(media)
+                                            }
+                                        },
+                                        onLongClick = {
+                                            selectionMode = true
+                                            selectedUris = selectedUris + media.uri
+                                        }
+                                    )
+                                }
+                            }
                         }  
                     }  
                 }  
