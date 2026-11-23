@@ -660,6 +660,7 @@ MaterialTheme {
                         )  
 
                         val selectionGridState = rememberLazyGridState()
+                        val selectionScope = rememberCoroutineScope()
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -697,10 +698,10 @@ MaterialTheme {
                                                 lastY = y
                                                 val edgeZone = 100.dp.toPx()
                                                 if (y < edgeZone) {
-                                                    selectionGridState.scrollBy(-24f)
+                                                    selectionScope.launch { selectionGridState.scrollBy(-24f) }
                                                     selectRowAt(y)
                                                 } else if (y > size.height - edgeZone) {
-                                                    selectionGridState.scrollBy(24f)
+                                                    selectionScope.launch { selectionGridState.scrollBy(24f) }
                                                     selectRowAt(y)
                                                 }
                                             }
@@ -1907,6 +1908,7 @@ private fun PrivacyFolderScreen(
         } else {
             val latestPrivateSelected by rememberUpdatedState(selectedPrivateFiles)
             val privateGridState = rememberLazyGridState()
+            val privateSelectionScope = rememberCoroutineScope()
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1947,10 +1949,10 @@ private fun PrivacyFolderScreen(
                                 lastY = pos.y
                                 val edge = 100.dp.toPx()
                                 if (pos.y < edge) {
-                                    privateGridState.scrollBy(-24f)
+                                    privateSelectionScope.launch { privateGridState.scrollBy(-24f) }
                                     selectPrivateAt(pos.x, pos.y)
                                 } else if (pos.y > size.height - edge) {
-                                    privateGridState.scrollBy(24f)
+                                    privateSelectionScope.launch { privateGridState.scrollBy(24f) }
                                     selectPrivateAt(pos.x, pos.y)
                                 }
                             }
