@@ -667,6 +667,8 @@ MaterialTheme {
                                 .pointerInput(selectionMode, displayedMedia) {
                                     if (selectionMode) {
                                         var lastY = 0f
+                                        var edgeDirection = 0
+                                        var autoScrollJob: kotlinx.coroutines.Job? = null
                                         // Select every thumbnail in the row touched by the drag,
                                         // rather than only the single thumbnail under the finger.
                                         fun selectRowAt(y: Float) {
@@ -697,13 +699,30 @@ MaterialTheme {
                                                 }
                                                 lastY = y
                                                 val edgeZone = 100.dp.toPx()
-                                                if (y < edgeZone) {
-                                                    selectionScope.launch { selectionGridState.scrollBy(-24f) }
-                                                    selectRowAt(y)
-                                                } else if (y > size.height - edgeZone) {
-                                                    selectionScope.launch { selectionGridState.scrollBy(24f) }
-                                                    selectRowAt(y)
+                                                edgeDirection = when {
+                                                    y < edgeZone -> -1
+                                                    y > size.height - edgeZone -> 1
+                                                    else -> 0
                                                 }
+                                                if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
+                                                    autoScrollJob = selectionScope.launch {
+                                                        while (edgeDirection != 0) {
+                                                            selectionGridState.scrollBy(edgeDirection * 10f)
+                                                            selectRowAt(lastY)
+                                                            kotlinx.coroutines.delay(16L)
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                edgeDirection = 0
+                                                autoScrollJob?.cancel()
+                                                autoScrollJob = null
+                                            },
+                                            onDragCancel = {
+                                                edgeDirection = 0
+                                                autoScrollJob?.cancel()
+                                                autoScrollJob = null
                                             }
                                         )
                                     }
@@ -1917,6 +1936,8 @@ private fun PrivacyFolderScreen(
                         if (selectedPrivateFiles.isNotEmpty()) {
                         var lastX = 0f
                         var lastY = 0f
+                        var privateEdgeDirection = 0
+                        var privateAutoScrollJob: kotlinx.coroutines.Job? = null
                         fun selectPrivateAt(x: Float, y: Float) {
                             val hit = privateGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
                                 x >= info.offset.x && x < info.offset.x + info.size.width &&
@@ -1948,13 +1969,30 @@ private fun PrivacyFolderScreen(
                                 lastX = pos.x
                                 lastY = pos.y
                                 val edge = 100.dp.toPx()
-                                if (pos.y < edge) {
-                                    privateSelectionScope.launch { privateGridState.scrollBy(-24f) }
-                                    selectPrivateAt(pos.x, pos.y)
-                                } else if (pos.y > size.height - edge) {
-                                    privateSelectionScope.launch { privateGridState.scrollBy(24f) }
-                                    selectPrivateAt(pos.x, pos.y)
+                                privateEdgeDirection = when {
+                                    pos.y < edge -> -1
+                                    pos.y > size.height - edge -> 1
+                                    else -> 0
                                 }
+                                if (privateEdgeDirection != 0 && privateAutoScrollJob?.isActive != true) {
+                                    privateAutoScrollJob = privateSelectionScope.launch {
+                                        while (privateEdgeDirection != 0) {
+                                            privateGridState.scrollBy(privateEdgeDirection * 10f)
+                                            selectPrivateAt(lastX, lastY)
+                                            kotlinx.coroutines.delay(16L)
+                                        }
+                                    }
+                                }
+                            },
+                            onDragEnd = {
+                                privateEdgeDirection = 0
+                                privateAutoScrollJob?.cancel()
+                                privateAutoScrollJob = null
+                            },
+                            onDragCancel = {
+                                privateEdgeDirection = 0
+                                privateAutoScrollJob?.cancel()
+                                privateAutoScrollJob = null
                             }
                         )
                         }
