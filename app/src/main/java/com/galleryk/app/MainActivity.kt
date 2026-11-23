@@ -672,7 +672,7 @@ MaterialTheme {
                                         var autoScrollJob: kotlinx.coroutines.Job? = null
                                         // Select every thumbnail in the row touched by the drag,
                                         // rather than only the single thumbnail under the finger.
-                                        fun selectRowAt(y: Float) {
+                                        fun updateRowAt(y: Float, selecting: Boolean) {
                                             val visible = selectionGridState.layoutInfo.visibleItemsInfo
                                             val hit = visible.firstOrNull { info ->
                                                 y >= info.offset.y && y < info.offset.y + info.size.height
@@ -680,14 +680,18 @@ MaterialTheme {
                                             val rowTop = hit.offset.y
                                             visible.filter { it.offset.y == rowTop }.forEach { info ->
                                                 displayedMedia.getOrNull(info.index)?.let { media ->
-                                                    if (media.uri !in selectedUris) selectedUris = selectedUris + media.uri
+                                                    if (selecting && media.uri !in selectedUris) {
+                                                        selectedUris = selectedUris + media.uri
+                                                    } else if (!selecting && media.uri in selectedUris) {
+                                                        selectedUris = selectedUris - media.uri
+                                                    }
                                                 }
                                             }
                                         }
                                         detectDragGestures(
                                             onDragStart = { start ->
                                                 lastY = start.y
-                                                selectRowAt(start.y)
+                                                updateRowAt(start.y, selecting = true)
                                                 // Start the edge-scroll watcher as soon as a drag begins,
                                                 // so entering the top edge can reverse direction reliably.
                                                 autoScrollJob = selectionScope.launch {
@@ -695,7 +699,7 @@ MaterialTheme {
                                                         val direction = edgeDirection
                                                         if (direction != 0) {
                                                             selectionGridState.scrollBy(direction * 14f)
-                                                            selectRowAt(lastY)
+                                                            updateRowAt(lastY, selecting = direction > 0)
                                                         }
                                                         kotlinx.coroutines.delay(16L)
                                                     }
@@ -708,7 +712,7 @@ MaterialTheme {
                                                 val steps = kotlin.math.ceil(kotlin.math.abs(dy) / 8f).toInt().coerceAtLeast(1)
                                                 for (step in 1..steps) {
                                                     val fraction = step.toFloat() / steps
-                                                    selectRowAt(lastY + dy * fraction)
+                                                    updateRowAt(lastY + dy * fraction, selecting = dy >= 0f)
                                                 }
                                                 lastY = y
                                                 // The watcher is already running; only update its direction here.
