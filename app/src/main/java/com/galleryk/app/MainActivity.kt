@@ -915,69 +915,69 @@ onBack: () -> Unit
 ) {
 val context = LocalContext.current
 
-var bitmap by remember(uri) {  
-    mutableStateOf<Bitmap?>(null)  
-}  
-
-LaunchedEffect(uri) {  
-    bitmap = withContext(Dispatchers.IO) {  
-        try {  
-            context.contentResolver  
-                .openInputStream(uri)?.use {  
-                    android.graphics.BitmapFactory.decodeStream(it)  
-                }  
-        } catch (_: Exception) {  
-            null  
-        }  
-    }  
-}  
-
-Column(  
-    Modifier  
-        .fillMaxSize()  
-        .background(Color.Black)  
-) {  
-    Row(  
-        Modifier  
-            .fillMaxWidth()
-            .statusBarsPadding()  
-            .padding(16.dp),  
-        verticalAlignment = Alignment.CenterVertically  
-    ) {  
-        Text(  
-            "‹",  
-            color = Color.White,  
-            fontSize = 34.sp,  
-            modifier = Modifier.clickable(onClick = onBack)  
-        )  
-
-        Spacer(Modifier.width(20.dp))  
-
-        Text(  
-            "Photo ${index + 1} / $total",  
-            color = Color.White,  
-            fontSize = 17.sp  
-        )  
-    }  
-
-    Box(  
-        Modifier  
-            .weight(1f)  
-            .fillMaxWidth(),  
-        contentAlignment = Alignment.Center  
-    ) {  
-        if (bitmap != null) {  
-            Image(  
-                bitmap = bitmap!!.asImageBitmap(),  
-                contentDescription = "Full photo",  
-                modifier = Modifier.fillMaxSize(),  
-                contentScale = ContentScale.Fit  
-            )  
-        } else {  
-            CircularProgressIndicator(color = Color.White)  
-        }  
-    }  
+var bitmap by remember(uri) {
+    mutableStateOf<Bitmap?>(null)
 }
+
+LaunchedEffect(uri) {
+    bitmap = withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver
+                .openInputStream(uri)?.use {
+                    android.graphics.BitmapFactory.decodeStream(it)
+                }
+        } catch (_: Exception) {
+            null
+        }
+    }
+}
+
+
+Box(
+    Modifier
+        .fillMaxSize()
+        .background(Color.Black)
+) {
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap!!.asImageBitmap(),
+            contentDescription = "Full photo",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit
+        )
+    } else {
+        CircularProgressIndicator(
+            color = Color.White,
+            modifier = Modifier.align(Alignment.Center)
+        )
+    }
+
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .align(Alignment.TopStart)
+            .statusBarsPadding()
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "‹",
+            color = Color.White,
+            fontSize = 34.sp,
+            modifier = Modifier.clickable(onClick = onBack)
+        )
+
+        Spacer(Modifier.width(20.dp))
+
+        Text(
+            "Photo ${index + 1} / $total",
+            color = Color.White,
+            fontSize = 17.sp
+        )
+    }
+}
+
 
 }
 
