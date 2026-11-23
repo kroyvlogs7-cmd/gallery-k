@@ -669,27 +669,36 @@ MaterialTheme {
                                         var lastY = 0f
                                         var edgeDirection = 0
                                         var dragDirection = 1
+                                        var lastRowStartIndex = -1
                                         var autoScrollJob: kotlinx.coroutines.Job? = null
                                         var dragSelectedUris = selectedUris
 
-                                        // Apply one batched state change per row to avoid rapid
-                                        // repeated recompositions while the finger is moving.
+                                        // Track crossed grid rows by item index, not small pixel samples.
+                                        // Batch each crossed range into one state update to reduce flicker.
                                         fun applyRowAt(y: Float, add: Boolean) {
                                             val visible = selectionGridState.layoutInfo.visibleItemsInfo
                                             val hit = visible.firstOrNull { info ->
                                                 y >= info.offset.y && y < info.offset.y + info.size.height
                                             } ?: return
-                                            val rowTop = hit.offset.y
-                                            val rowUris = visible
-                                                .filter { it.offset.y == rowTop }
-                                                .mapNotNull { info -> displayedMedia.getOrNull(info.index)?.uri }
-                                                .toSet()
+                                            val targetRowStart = (hit.index / 3) * 3
+                                            val from = if (lastRowStartIndex < 0) targetRowStart else lastRowStartIndex
+                                            val rowStarts = if (from <= targetRowStart) {
+                                                (from..targetRowStart step 3).toList()
+                                            } else {
+                                                (from downTo targetRowStart step 3).toList()
+                                            }
+                                            val rowUris = rowStarts.flatMap { rowStart ->
+                                                (rowStart until (rowStart + 3).coerceAtMost(displayedMedia.size))
+                                                    .mapNotNull { index -> displayedMedia.getOrNull(index)?.uri }
+                                            }.toSet()
                                             val updated = if (add) dragSelectedUris + rowUris else dragSelectedUris - rowUris
                                             if (updated != dragSelectedUris) {
                                                 dragSelectedUris = updated
                                                 selectedUris = updated
                                             }
+                                            lastRowStartIndex = targetRowStart
                                         }
+
 
                                         detectDragGestures(
                                             onDragStart = { start ->
