@@ -660,7 +660,6 @@ MaterialTheme {
                         )  
 
                         val selectionGridState = rememberLazyGridState()
-                        val selectionScope = rememberCoroutineScope()
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -701,9 +700,14 @@ MaterialTheme {
                                                 lastY = position.y
                                                 val edgeZone = 100.dp.toPx()
                                                 if (position.y < edgeZone) {
-                                                    selectionScope.launch { selectionGridState.scrollBy(-35f) }
+                                                    selectionGridState.scrollBy(-35f)
+                                                    // Hit-test again after the grid has moved so the item now
+                                                    // beneath the stationary finger is also selected.
+                                                    selectAt(position.x, position.y)
                                                 } else if (position.y > size.height - edgeZone) {
-                                                    selectionScope.launch { selectionGridState.scrollBy(35f) }
+                                                    selectionGridState.scrollBy(35f)
+                                                    // Select the newly revealed thumbnail under the finger.
+                                                    selectAt(position.x, position.y)
                                                 }
                                             }
                                         )
