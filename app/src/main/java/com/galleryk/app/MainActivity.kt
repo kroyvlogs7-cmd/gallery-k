@@ -666,14 +666,16 @@ MaterialTheme {
                                 .fillMaxSize()
                                 .pointerInput(selectionMode, displayedMedia) {
                                     if (selectionMode) {
-                                        var lastX = 0f
                                         var lastY = 0f
-                                        fun selectAt(x: Float, y: Float) {
-                                            val hit = selectionGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                                                x >= info.offset.x && x < info.offset.x + info.size.width &&
+                                        // Select every thumbnail in the row touched by the drag,
+                                        // rather than only the single thumbnail under the finger.
+                                        fun selectRowAt(y: Float) {
+                                            val visible = selectionGridState.layoutInfo.visibleItemsInfo
+                                            val hit = visible.firstOrNull { info ->
                                                 y >= info.offset.y && y < info.offset.y + info.size.height
-                                            }
-                                            hit?.let { info ->
+                                            } ?: return
+                                            val rowTop = hit.offset.y
+                                            visible.filter { it.offset.y == rowTop }.forEach { info ->
                                                 displayedMedia.getOrNull(info.index)?.let { media ->
                                                     if (media.uri !in selectedUris) selectedUris = selectedUris + media.uri
                                                 }
@@ -681,37 +683,29 @@ MaterialTheme {
                                         }
                                         detectDragGestures(
                                             onDragStart = { start ->
-                                                lastX = start.x
                                                 lastY = start.y
-                                                selectAt(start.x, start.y)
+                                                selectRowAt(start.y)
                                             },
                                             onDrag = { change, _ ->
                                                 change.consume()
-                                                val position = change.position
-                                                // Sample the full path between pointer events so fast swipes don't skip thumbnails.
-                                                val dx = position.x - lastX
-                                                val dy = position.y - lastY
-                                                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                                val steps = kotlin.math.ceil(distance / 12f).toInt().coerceAtLeast(1)
+                                                val y = change.position.y
+                                                val dy = y - lastY
+                                                val steps = kotlin.math.ceil(kotlin.math.abs(dy) / 8f).toInt().coerceAtLeast(1)
                                                 for (step in 1..steps) {
                                                     val fraction = step.toFloat() / steps
-                                                    selectAt(lastX + dx * fraction, lastY + dy * fraction)
+                                                    selectRowAt(lastY + dy * fraction)
                                                 }
-                                                lastX = position.x
-                                                lastY = position.y
+                                                lastY = y
                                                 val edgeZone = 100.dp.toPx()
-                                                if (position.y < edgeZone) {
+                                                if (y < edgeZone) {
                                                     selectionScope.launch {
                                                         selectionGridState.scrollBy(-70f)
-                                                        // Hit-test again after scrolling so the item now
-                                                        // beneath the stationary finger is also selected.
-                                                        selectAt(position.x, position.y)
+                                                        selectRowAt(y)
                                                     }
-                                                } else if (position.y > size.height - edgeZone) {
+                                                } else if (y > size.height - edgeZone) {
                                                     selectionScope.launch {
                                                         selectionGridState.scrollBy(70f)
-                                                        // Select the newly revealed thumbnail under the finger.
-                                                        selectAt(position.x, position.y)
+                                                        selectRowAt(y)
                                                     }
                                                 }
                                             }
