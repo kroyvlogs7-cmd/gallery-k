@@ -939,7 +939,8 @@ Column(
 ) {  
     Row(  
         Modifier  
-            .fillMaxWidth()  
+            .fillMaxWidth()
+            .statusBarsPadding()  
             .padding(16.dp),  
         verticalAlignment = Alignment.CenterVertically  
     ) {  
