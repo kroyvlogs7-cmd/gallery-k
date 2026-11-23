@@ -687,6 +687,18 @@ MaterialTheme {
                                             onDragStart = { start ->
                                                 lastY = start.y
                                                 selectRowAt(start.y)
+                                                // Start the edge-scroll watcher as soon as a drag begins,
+                                                // so entering the top edge can reverse direction reliably.
+                                                autoScrollJob = selectionScope.launch {
+                                                    while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                                                        val direction = edgeDirection
+                                                        if (direction != 0) {
+                                                            selectionGridState.scrollBy(direction * 14f)
+                                                            selectRowAt(lastY)
+                                                        }
+                                                        kotlinx.coroutines.delay(16L)
+                                                    }
+                                                }
                                             },
                                             onDrag = { change, _ ->
                                                 change.consume()
@@ -698,26 +710,12 @@ MaterialTheme {
                                                     selectRowAt(lastY + dy * fraction)
                                                 }
                                                 lastY = y
-                                                val edgeZone = 100.dp.toPx()
+                                                // The watcher is already running; only update its direction here.
+                                                // Use a generous edge zone to make upward scrolling easy to trigger.
                                                 edgeDirection = when {
-                                                    y < edgeZone -> -1
-                                                    y > size.height - edgeZone -> 1
+                                                    y < 150.dp.toPx() -> -1
+                                                    y > size.height - 150.dp.toPx() -> 1
                                                     else -> 0
-                                                }
-                                                if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
-                                                    autoScrollJob = selectionScope.launch {
-                                                        // Keep one scroll loop alive for the whole drag.
-                                                        // Direction is updated live, so switching from bottom to top
-                                                        // reverses smoothly without restarting or leaving a stuck job.
-                                                        while (true) {
-                                                            val direction = edgeDirection
-                                                            if (direction != 0) {
-                                                                selectionGridState.scrollBy(direction * 10f)
-                                                                selectRowAt(lastY)
-                                                            }
-                                                            kotlinx.coroutines.delay(16L)
-                                                        }
-                                                    }
                                                 }
                                             },
                                             onDragEnd = {
