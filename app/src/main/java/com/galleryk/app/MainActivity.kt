@@ -53,8 +53,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.input.pointer.pointerInput
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -668,68 +666,69 @@ MaterialTheme {
                                 .fillMaxSize()
                                 .pointerInput(selectionMode, displayedMedia) {
                                     if (selectionMode) {
-                                        var lastX = 0f
                                         var lastY = 0f
-                                        var autoScrollJob: Job? = null
                                         var edgeDirection = 0
-                                        fun selectAt(x: Float, y: Float) {
-                                            val hit = selectionGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                                                x >= info.offset.x && x < info.offset.x + info.size.width &&
+                                        var autoScrollJob: kotlinx.coroutines.Job? = null
+                                        // Select every thumbnail in the row touched by the drag,
+                                        // rather than only the single thumbnail under the finger.
+                                        fun selectRowAt(y: Float) {
+                                            val visible = selectionGridState.layoutInfo.visibleItemsInfo
+                                            val hit = visible.firstOrNull { info ->
                                                 y >= info.offset.y && y < info.offset.y + info.size.height
-                                            }
-                                            hit?.let { info ->
+                                            } ?: return
+                                            val rowTop = hit.offset.y
+                                            visible.filter { it.offset.y == rowTop }.forEach { info ->
                                                 displayedMedia.getOrNull(info.index)?.let { media ->
                                                     if (media.uri !in selectedUris) selectedUris = selectedUris + media.uri
                                                 }
                                             }
                                         }
-                                        fun setAutoScroll(direction: Int, x: Float, y: Float) {
-                                            if (direction == 0) {
-                                                autoScrollJob?.cancel()
-                                                autoScrollJob = null
-                                                edgeDirection = 0
-                                                return
-                                            }
-                                            if (edgeDirection == direction && autoScrollJob?.isActive == true) return
-                                            autoScrollJob?.cancel()
-                                            edgeDirection = direction
-                                            autoScrollJob = selectionScope.launch {
-                                                while (true) {
-                                                    selectionGridState.scrollBy(direction * 18f)
-                                                    selectAt(x, y)
-                                                    delay(16)
-                                                }
-                                            }
-                                        }
                                         detectDragGestures(
                                             onDragStart = { start ->
-                                                lastX = start.x
                                                 lastY = start.y
-                                                selectAt(start.x, start.y)
+                                                selectRowAt(start.y)
                                             },
-                                            onDragEnd = { setAutoScroll(0, lastX, lastY) },
-                                            onDragCancel = { setAutoScroll(0, lastX, lastY) },
                                             onDrag = { change, _ ->
                                                 change.consume()
-                                                val position = change.position
-                                                // Sample the path between events to avoid skipping items on quick swipes.
-                                                val dx = position.x - lastX
-                                                val dy = position.y - lastY
-                                                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                                val steps = kotlin.math.ceil(distance / 12f).toInt().coerceAtLeast(1)
+                                                val y = change.position.y
+                                                val dy = y - lastY
+                                                val steps = kotlin.math.ceil(kotlin.math.abs(dy) / 8f).toInt().coerceAtLeast(1)
                                                 for (step in 1..steps) {
                                                     val fraction = step.toFloat() / steps
-                                                    selectAt(lastX + dx * fraction, lastY + dy * fraction)
+                                                    selectRowAt(lastY + dy * fraction)
                                                 }
-                                                lastX = position.x
-                                                lastY = position.y
+                                                lastY = y
                                                 val edgeZone = 100.dp.toPx()
-                                                val direction = when {
-                                                    position.y < edgeZone -> -1
-                                                    position.y > size.height - edgeZone -> 1
+                                                edgeDirection = when {
+                                                    y < edgeZone -> -1
+                                                    y > size.height - edgeZone -> 1
                                                     else -> 0
                                                 }
-                                                setAutoScroll(direction, position.x, position.y)
+                                                if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
+                                                    autoScrollJob = selectionScope.launch {
+                                                        // Keep one scroll loop alive for the whole drag.
+                                                        // Direction is updated live, so switching from bottom to top
+                                                        // reverses smoothly without restarting or leaving a stuck job.
+                                                        while (true) {
+                                                            val direction = edgeDirection
+                                                            if (direction != 0) {
+                                                                selectionGridState.scrollBy(direction * 10f)
+                                                                selectRowAt(lastY)
+                                                            }
+                                                            kotlinx.coroutines.delay(16L)
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                edgeDirection = 0
+                                                autoScrollJob?.cancel()
+                                                autoScrollJob = null
+                                            },
+                                            onDragCancel = {
+                                                edgeDirection = 0
+                                                autoScrollJob?.cancel()
+                                                autoScrollJob = null
                                             }
                                         )
                                     }
@@ -1932,9 +1931,83 @@ private fun PrivacyFolderScreen(
                 Text("No saved media yet.", color = Color.Gray)
             }
         } else {
+            val latestPrivateSelected by rememberUpdatedState(selectedPrivateFiles)
+            val privateGridState = rememberLazyGridState()
+            val privateSelectionScope = rememberCoroutineScope()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .pointerInput(filteredFiles, selectedPrivateFiles.isNotEmpty()) {
+                        if (selectedPrivateFiles.isNotEmpty()) {
+                        var lastX = 0f
+                        var lastY = 0f
+                        var privateEdgeDirection = 0
+                        var privateAutoScrollJob: kotlinx.coroutines.Job? = null
+                        fun selectPrivateAt(x: Float, y: Float) {
+                            val hit = privateGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                                x >= info.offset.x && x < info.offset.x + info.size.width &&
+                                y >= info.offset.y && y < info.offset.y + info.size.height
+                            }
+                            hit?.let { info ->
+                                filteredFiles.getOrNull(info.index)?.let { item ->
+                                    selectedPrivateFiles = latestPrivateSelected + item.absolutePath
+                                }
+                            }
+                        }
+                        detectDragGestures(
+                            onDragStart = { start ->
+                                lastX = start.x
+                                lastY = start.y
+                                selectPrivateAt(start.x, start.y)
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val pos = change.position
+                                val dx = pos.x - lastX
+                                val dy = pos.y - lastY
+                                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                                val steps = kotlin.math.ceil(distance / 12f).toInt().coerceAtLeast(1)
+                                for (step in 1..steps) {
+                                    val f = step.toFloat() / steps
+                                    selectPrivateAt(lastX + dx * f, lastY + dy * f)
+                                }
+                                lastX = pos.x
+                                lastY = pos.y
+                                val edge = 100.dp.toPx()
+                                privateEdgeDirection = when {
+                                    pos.y < edge -> -1
+                                    pos.y > size.height - edge -> 1
+                                    else -> 0
+                                }
+                                if (privateEdgeDirection != 0 && privateAutoScrollJob?.isActive != true) {
+                                    privateAutoScrollJob = privateSelectionScope.launch {
+                                        while (privateEdgeDirection != 0) {
+                                            privateGridState.scrollBy(privateEdgeDirection * 10f)
+                                            selectPrivateAt(lastX, lastY)
+                                            kotlinx.coroutines.delay(16L)
+                                        }
+                                    }
+                                }
+                            },
+                            onDragEnd = {
+                                privateEdgeDirection = 0
+                                privateAutoScrollJob?.cancel()
+                                privateAutoScrollJob = null
+                            },
+                            onDragCancel = {
+                                privateEdgeDirection = 0
+                                privateAutoScrollJob?.cancel()
+                                privateAutoScrollJob = null
+                            }
+                        )
+                        }
+                    }
+            ) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                state = privateGridState,
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -2019,6 +2092,7 @@ private fun PrivacyFolderScreen(
                         }
                     }
                 }
+            }
             }
         }
     }
