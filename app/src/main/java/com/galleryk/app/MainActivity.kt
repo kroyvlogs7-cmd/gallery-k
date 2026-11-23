@@ -660,7 +660,6 @@ MaterialTheme {
                         )  
 
                         val selectionGridState = rememberLazyGridState()
-                        val selectionScope = rememberCoroutineScope()
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -698,15 +697,11 @@ MaterialTheme {
                                                 lastY = y
                                                 val edgeZone = 100.dp.toPx()
                                                 if (y < edgeZone) {
-                                                    selectionScope.launch {
-                                                        selectionGridState.scrollBy(-70f)
-                                                        selectRowAt(y)
-                                                    }
+                                                    selectionGridState.scrollBy(-24f)
+                                                    selectRowAt(y)
                                                 } else if (y > size.height - edgeZone) {
-                                                    selectionScope.launch {
-                                                        selectionGridState.scrollBy(70f)
-                                                        selectRowAt(y)
-                                                    }
+                                                    selectionGridState.scrollBy(24f)
+                                                    selectRowAt(y)
                                                 }
                                             }
                                         )
@@ -1912,12 +1907,12 @@ private fun PrivacyFolderScreen(
         } else {
             val latestPrivateSelected by rememberUpdatedState(selectedPrivateFiles)
             val privateGridState = rememberLazyGridState()
-            val privateSelectionScope = rememberCoroutineScope()
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .pointerInput(filteredFiles) {
+                    .pointerInput(filteredFiles, selectedPrivateFiles.isNotEmpty()) {
+                        if (selectedPrivateFiles.isNotEmpty()) {
                         var lastX = 0f
                         var lastY = 0f
                         fun selectPrivateAt(x: Float, y: Float) {
@@ -1952,18 +1947,15 @@ private fun PrivacyFolderScreen(
                                 lastY = pos.y
                                 val edge = 100.dp.toPx()
                                 if (pos.y < edge) {
-                                    privateSelectionScope.launch {
-                                        privateGridState.scrollBy(-70f)
-                                        selectPrivateAt(pos.x, pos.y)
-                                    }
+                                    privateGridState.scrollBy(-24f)
+                                    selectPrivateAt(pos.x, pos.y)
                                 } else if (pos.y > size.height - edge) {
-                                    privateSelectionScope.launch {
-                                        privateGridState.scrollBy(70f)
-                                        selectPrivateAt(pos.x, pos.y)
-                                    }
+                                    privateGridState.scrollBy(24f)
+                                    selectPrivateAt(pos.x, pos.y)
                                 }
                             }
                         )
+                        }
                     }
             ) {
             LazyVerticalGrid(
