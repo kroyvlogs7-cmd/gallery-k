@@ -65,7 +65,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.isActive
 import androidx.compose.runtime.rememberCoroutineScope
 import java.io.File
 
@@ -669,58 +668,60 @@ MaterialTheme {
                                     if (selectionMode) {
                                         var lastY = 0f
                                         var edgeDirection = 0
+                                        var dragDirection = 1
                                         var autoScrollJob: kotlinx.coroutines.Job? = null
-                                        // Select every thumbnail in the row touched by the drag,
-                                        // rather than only the single thumbnail under the finger.
-                                        fun updateRowAt(y: Float, selecting: Boolean) {
+                                        var dragSelectedUris = selectedUris
+
+                                        // Apply one batched state change per row to avoid rapid
+                                        // repeated recompositions while the finger is moving.
+                                        fun applyRowAt(y: Float, add: Boolean) {
                                             val visible = selectionGridState.layoutInfo.visibleItemsInfo
                                             val hit = visible.firstOrNull { info ->
                                                 y >= info.offset.y && y < info.offset.y + info.size.height
                                             } ?: return
                                             val rowTop = hit.offset.y
-                                            visible.filter { it.offset.y == rowTop }.forEach { info ->
-                                                displayedMedia.getOrNull(info.index)?.let { media ->
-                                                    if (selecting && media.uri !in selectedUris) {
-                                                        selectedUris = selectedUris + media.uri
-                                                    } else if (!selecting && media.uri in selectedUris) {
-                                                        selectedUris = selectedUris - media.uri
-                                                    }
-                                                }
+                                            val rowUris = visible
+                                                .filter { it.offset.y == rowTop }
+                                                .mapNotNull { info -> displayedMedia.getOrNull(info.index)?.uri }
+                                                .toSet()
+                                            val updated = if (add) dragSelectedUris + rowUris else dragSelectedUris - rowUris
+                                            if (updated != dragSelectedUris) {
+                                                dragSelectedUris = updated
+                                                selectedUris = updated
                                             }
                                         }
+
                                         detectDragGestures(
                                             onDragStart = { start ->
                                                 lastY = start.y
-                                                updateRowAt(start.y, selecting = true)
-                                                // Start the edge-scroll watcher as soon as a drag begins,
-                                                // so entering the top edge can reverse direction reliably.
-                                                autoScrollJob = selectionScope.launch {
-                                                    while (kotlinx.coroutines.currentCoroutineContext().isActive) {
-                                                        val direction = edgeDirection
-                                                        if (direction != 0) {
-                                                            selectionGridState.scrollBy(direction * 14f)
-                                                            updateRowAt(lastY, selecting = direction > 0)
-                                                        }
-                                                        kotlinx.coroutines.delay(16L)
-                                                    }
-                                                }
+                                                applyRowAt(start.y, add = true)
                                             },
                                             onDrag = { change, _ ->
                                                 change.consume()
                                                 val y = change.position.y
                                                 val dy = y - lastY
-                                                val steps = kotlin.math.ceil(kotlin.math.abs(dy) / 8f).toInt().coerceAtLeast(1)
-                                                for (step in 1..steps) {
+                                                if (dy != 0f) dragDirection = if (dy > 0f) 1 else -1
+                                                val steps = kotlin.math.ceil(kotlin.math.abs(dy) / 4f).toInt().coerceAtLeast(1)
+                                                for ( step in 1..steps) {
                                                     val fraction = step.toFloat() / steps
-                                                    updateRowAt(lastY + dy * fraction, selecting = dy >= 0f)
+                                                    applyRowAt(lastY + dy * fraction, add = dragDirection > 0)
                                                 }
                                                 lastY = y
-                                                // The watcher is already running; only update its direction here.
-                                                // Use a generous edge zone to make upward scrolling easy to trigger.
+                                                val edgeZone = 100.dp.toPx()
                                                 edgeDirection = when {
-                                                    y < 150.dp.toPx() -> -1
-                                                    y > size.height - 150.dp.toPx() -> 1
+                                                    y < edgeZone -> -1
+                                                    y > size.height - edgeZone -> 1
                                                     else -> 0
+                                                }
+                                                if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
+                                                    autoScrollJob = selectionScope.launch {
+                                                        while (edgeDirection != 0) {
+                                                            val direction = edgeDirection
+                                                            selectionGridState.scrollBy(direction * 10f)
+                                                            applyRowAt(lastY, add = direction > 0)
+                                                            kotlinx.coroutines.delay(16L)
+                                                        }
+                                                    }
                                                 }
                                             },
                                             onDragEnd = {
