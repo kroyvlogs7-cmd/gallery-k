@@ -680,11 +680,11 @@ MaterialTheme {
                                         y >= info.offset.y && y < info.offset.y + info.size.height
                                     } ?: return
                                     val targetRowStart = (hit.index / 3) * 3
-                                    val from = if (lastRowStartIndex < 0) targetRowStartIndex else lastRowStartIndex
-                                    val rowStarts = if (from <= targetRowStartIndex) {
-                                        (from..targetRowStartIndex step 3).toList()
+                                    val from = if (lastRowStartIndex < 0) targetRowStart else lastRowStartIndex
+                                    val rowStarts = if (from <= targetRowStart) {
+                                        (from..targetRowStart step 3).toList()
                                     } else {
-                                        (from downTo targetRowStartIndex step 3).toList()
+                                        (from downTo targetRowStart step 3).toList()
                                     }
                                     val rowUris = rowStarts.flatMap { rowStart ->
                                         (rowStart until (rowStart + 3).coerceAtMost(displayedMedia.size))
