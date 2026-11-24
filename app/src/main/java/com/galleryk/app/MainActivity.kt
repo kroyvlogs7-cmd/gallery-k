@@ -744,8 +744,8 @@ MaterialTheme {
                                                         val threshold = if (direction < 0) size.height * 0.50f else size.height * 0.70f
                                                         val distance = if (direction < 0) threshold - lastY else lastY - threshold
                                                         val maxDistance = if (direction < 0) threshold else size.height - threshold
-                                                        val speed = (3f + (distance / maxDistance.coerceAtLeast(1f)) * 7f)
-                                                            .coerceIn(3f, 10f)
+                                                        val speed = (7f + (distance / maxDistance.coerceAtLeast(1f)) * 13f)
+                                                            .coerceIn(7f, 20f)
                                                         selectionGridState.scrollBy(direction * speed)
                                                         applyRowAt(lastY, add = dragDirection > 0)
                                                         kotlinx.coroutines.delay(16L)
