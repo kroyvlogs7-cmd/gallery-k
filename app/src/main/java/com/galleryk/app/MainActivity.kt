@@ -28,7 +28,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -703,10 +702,9 @@ MaterialTheme {
                                     lastRowStartIndex = targetRowStart
                                 }
 
-                                detectDragGesturesAfterLongPress(
+                                detectDragGestures(
                                     onDragStart = { start ->
-                                        trackingSelectionDrag = true
-                                        if (!selectionModeState.value) selectionMode = true
+                                        trackingSelectionDrag = selectionModeState.value
                                         if (trackingSelectionDrag) {
                                             lastY = start.y
                                             accumulatedDy = 0f
@@ -718,7 +716,7 @@ MaterialTheme {
                                         }
                                     },
                                     onDrag = { change, _ ->
-                                        if (trackingSelectionDrag) {
+                                        if (trackingSelectionDrag && selectionModeState.value) {
                                             change.consume()
                                             val y = change.position.y
                                             accumulatedDy += y - lastY
@@ -743,19 +741,13 @@ MaterialTheme {
                                                 autoScrollJob = selectionScope.launch {
                                                     while (scrollDirection != 0 && trackingSelectionDrag) {
                                                         val direction = scrollDirection
-                                                        dragDirection = direction
                                                         val threshold = if (direction < 0) size.height * 0.50f else size.height * 0.70f
                                                         val distance = if (direction < 0) threshold - lastY else lastY - threshold
                                                         val maxDistance = if (direction < 0) threshold else size.height - threshold
                                                         val speed = (3f + (distance / maxDistance.coerceAtLeast(1f)) * 7f)
                                                             .coerceIn(3f, 10f)
-                                                        val beforeIndex = selectionGridState.firstVisibleItemIndex
-                                                        val beforeOffset = selectionGridState.firstVisibleItemScrollOffset
-                                                        val moved = selectionGridState.scrollBy(direction * speed)
-                                                        if (moved != 0f || beforeIndex != selectionGridState.firstVisibleItemIndex || beforeOffset != selectionGridState.firstVisibleItemScrollOffset) {
-                                                            // Selection must follow the scroll itself, even when the finger is stationary.
-                                                            applyRowAt(lastY, add = direction > 0)
-                                                        }
+                                                        selectionGridState.scrollBy(direction * speed)
+                                                        applyRowAt(lastY, add = dragDirection > 0)
                                                         kotlinx.coroutines.delay(16L)
                                                     }
                                                 }
@@ -807,10 +799,9 @@ MaterialTheme {
                                             }
                                         },
                                         onLongClick = {
-                                            // Long-press selection is handled by the parent
-                                            // grid gesture so the same finger can continue dragging.
-                                        },
-                                        useLongClick = false
+                                            selectionMode = true
+                                            selectedUris = selectedUris + media.uri
+                                        }
                                     )
                                 }
                             }
@@ -869,8 +860,7 @@ private fun MediaThumbnail(
 media: GalleryMedia,
 selected: Boolean,
 onClick: () -> Unit,
-onLongClick: () -> Unit,
-useLongClick: Boolean = true
+onLongClick: () -> Unit
 ) {
 val context = LocalContext.current
 
