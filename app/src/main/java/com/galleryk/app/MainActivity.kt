@@ -2042,6 +2042,8 @@ private fun PrivacyFolderScreen(
                             var trackingPickerSelection = false
                             var dragSelectedUris = latestPickerSelection
                             var lastSelectedRow = -1
+                            var accumulatedDy = 0f
+                            var dragDirection = 1
                             var autoScrollJob: kotlinx.coroutines.Job? = null
 
                             // Match the main Gallery behavior: dragging across a row
@@ -2065,7 +2067,11 @@ private fun PrivacyFolderScreen(
                                     (start until (start + 3).coerceAtMost(pickerVisibleMedia.size))
                                         .mapNotNull { pickerVisibleMedia.getOrNull(it)?.uri }
                                 }.toSet()
-                                val updated = dragSelectedUris + rowUris
+                                val updated = if (dragDirection > 0) {
+                                    dragSelectedUris + rowUris
+                                } else {
+                                    dragSelectedUris - rowUris
+                                }
                                 if (updated != dragSelectedUris) {
                                     dragSelectedUris = updated
                                     pickerSelectedUris = updated
@@ -2082,6 +2088,8 @@ private fun PrivacyFolderScreen(
                                         lastY = start.y
                                         edgeDirection = 0
                                         lastSelectedRow = -1
+                                        accumulatedDy = 0f
+                                        dragDirection = 1
                                         selectAt(start.x, start.y)
                                     }
                                 },
@@ -2091,6 +2099,14 @@ private fun PrivacyFolderScreen(
                                         val pos = change.position
                                         val dx = pos.x - lastX
                                         val dy = pos.y - lastY
+                                        accumulatedDy += dy
+                                        if (accumulatedDy >= 10f) {
+                                            dragDirection = 1
+                                            accumulatedDy = 0f
+                                        } else if (accumulatedDy <= -10f) {
+                                            dragDirection = -1
+                                            accumulatedDy = 0f
+                                        }
                                         val distance = kotlin.math.sqrt(dx * dx + dy * dy)
                                         val steps = kotlin.math.ceil(distance / 10f).toInt().coerceAtLeast(1)
                                         for (step in 1..steps) {
@@ -2496,6 +2512,8 @@ private fun PrivacyFolderScreen(
                         var privateAutoScrollJob: kotlinx.coroutines.Job? = null
                         var dragSelectedPaths = latestPrivateSelected
                         var lastPrivateRow = -1
+                        var accumulatedDy = 0f
+                        var privateDragDirection = 1
 
                         // Match the main Gallery drag-selection behavior by selecting
                         // the full three-item row and every row crossed during auto-scroll.
@@ -2517,7 +2535,11 @@ private fun PrivacyFolderScreen(
                                 (start until (start + 3).coerceAtMost(filteredFiles.size))
                                     .mapNotNull { filteredFiles.getOrNull(it)?.absolutePath }
                             }.toSet()
-                            val updated = dragSelectedPaths + rowPaths
+                            val updated = if (privateDragDirection > 0) {
+                                dragSelectedPaths + rowPaths
+                            } else {
+                                dragSelectedPaths - rowPaths
+                            }
                             if (updated != dragSelectedPaths) {
                                 dragSelectedPaths = updated
                                 selectedPrivateFiles = updated
@@ -2536,6 +2558,8 @@ private fun PrivacyFolderScreen(
                                     lastY = start.y
                                     privateEdgeDirection = 0
                                     lastPrivateRow = -1
+                                    accumulatedDy = 0f
+                                    privateDragDirection = 1
                                     selectPrivateAt(start.x, start.y)
                                 }
                             },
@@ -2545,6 +2569,14 @@ private fun PrivacyFolderScreen(
                                     val pos = change.position
                                     val dx = pos.x - lastX
                                     val dy = pos.y - lastY
+                                    accumulatedDy += dy
+                                    if (accumulatedDy >= 10f) {
+                                        privateDragDirection = 1
+                                        accumulatedDy = 0f
+                                    } else if (accumulatedDy <= -10f) {
+                                        privateDragDirection = -1
+                                        accumulatedDy = 0f
+                                    }
                                     val distance = kotlin.math.sqrt(dx * dx + dy * dy)
                                     val steps = kotlin.math.ceil(distance / 10f).toInt().coerceAtLeast(1)
                                     for (step in 1..steps) {
