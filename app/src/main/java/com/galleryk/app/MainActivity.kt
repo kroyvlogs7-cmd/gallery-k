@@ -1841,6 +1841,7 @@ private fun PrivacyFolderScreen(
     var showDeletePrivateConfirm by remember { mutableStateOf(false) }
     var mediaFilter by remember { mutableStateOf("All") }
     var selectedPrivateFiles by remember { mutableStateOf(setOf<String>()) }
+    var privateSelectionDragging by remember { mutableStateOf(false) }
     var privacyMenuExpanded by remember { mutableStateOf(false) }
     var showPrivacyPicker by remember { mutableStateOf(false) }
     var pickerMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
@@ -2420,46 +2421,55 @@ private fun PrivacyFolderScreen(
                 else -> true
             }
         }
-        if (selectedPrivateFiles.isNotEmpty()) {
-            val selectedPrivateMedia = savedFiles.filter { file ->
-                file.absolutePath in selectedPrivateFiles && when (mediaFilter) {
-                    "Photos" -> file.parentFile == privatePhotosDir
-                    "Videos" -> file.parentFile == privateVideosDir
-                    else -> true
+        // Keep the action area at a constant height. When an upward drag removes
+        // the final selected item, the grid must not jump to fill the disappearing rows.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (selectedPrivateFiles.isNotEmpty() || privateSelectionDragging) 88.dp else 0.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (selectedPrivateFiles.isNotEmpty()) {
+                val selectedPrivateMedia = savedFiles.filter { file ->
+                    file.absolutePath in selectedPrivateFiles && when (mediaFilter) {
+                        "Photos" -> file.parentFile == privatePhotosDir
+                        "Videos" -> file.parentFile == privateVideosDir
+                        else -> true
+                    }
                 }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = { previewFiles = selectedPrivateMedia; previewIndex = 0 },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Preview (${selectedPrivateMedia.size})") }
-                Button(
-                    onClick = { showDeletePrivateConfirm = true },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9B3030))
-                ) { Text("Delete (${selectedPrivateMedia.size})") }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(
-                    onClick = {
-                        val selected = savedFiles.filter { it.absolutePath in selectedPrivateFiles }
-                        scope.launch {
-                            var restored = 0
-                            selected.forEach { file ->
-                                if (restorePrivateFile(file)) restored++
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { previewFiles = selectedPrivateMedia; previewIndex = 0 },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Preview (${selectedPrivateMedia.size})") }
+                    Button(
+                        onClick = { showDeletePrivateConfirm = true },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9B3030))
+                    ) { Text("Delete (${selectedPrivateMedia.size})") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = {
+                            val selected = savedFiles.filter { it.absolutePath in selectedPrivateFiles }
+                            scope.launch {
+                                var restored = 0
+                                selected.forEach { file ->
+                                    if (restorePrivateFile(file)) restored++
+                                }
+                                selectedPrivateFiles = emptySet()
+                                refreshSavedFiles()
+                                Toast.makeText(context, "Restored $restored of ${selected.size} files to Gallery", Toast.LENGTH_LONG).show()
                             }
-                            selectedPrivateFiles = emptySet()
-                            refreshSavedFiles()
-                            Toast.makeText(context, "Restored $restored of ${selected.size} files to Gallery", Toast.LENGTH_LONG).show()
-                        }
-                    },
-                    enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Unhide (${selectedPrivateFiles.size})") }
-                OutlinedButton(
-                    onClick = { selectedPrivateFiles = emptySet() },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Cancel") }
+                        },
+                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Unhide (${selectedPrivateFiles.size})") }
+                    OutlinedButton(
+                        onClick = { selectedPrivateFiles = emptySet() },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Cancel") }
+                }
             }
         }
 
@@ -2552,6 +2562,7 @@ private fun PrivacyFolderScreen(
                                 // Keep this pointerInput keyed only by the media list. A selection
                                 // state change must not cancel the active drag gesture.
                                 trackingPrivateSelection = latestPrivateSelected.isNotEmpty()
+                                privateSelectionDragging = trackingPrivateSelection
                                 if (trackingPrivateSelection) {
                                     dragSelectedPaths = latestPrivateSelected
                                     lastX = start.x
@@ -2608,12 +2619,14 @@ private fun PrivacyFolderScreen(
                             },
                             onDragEnd = {
                                 trackingPrivateSelection = false
+                                privateSelectionDragging = false
                                 privateEdgeDirection = 0
                                 privateAutoScrollJob?.cancel()
                                 privateAutoScrollJob = null
                             },
                             onDragCancel = {
                                 trackingPrivateSelection = false
+                                privateSelectionDragging = false
                                 privateEdgeDirection = 0
                                 privateAutoScrollJob?.cancel()
                                 privateAutoScrollJob = null
