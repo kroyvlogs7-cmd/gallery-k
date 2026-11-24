@@ -1205,6 +1205,7 @@ private fun PhotoViewer(
                 .pointerInput(uri, viewWidthPx, viewHeightPx, index, total, currentBitmap) {
                     var swipeDistance = 0f
                     var swipeHandled = false
+                    var lastPanTime = 0L
 
                     detectTransformGestures { _, pan, zoomChange, _ ->
                         val bitmapNow = currentBitmap ?: return@detectTransformGestures
@@ -1228,6 +1229,7 @@ private fun PhotoViewer(
                             offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
                             swipeDistance = 0f
                             swipeHandled = false
+                            lastPanTime = 0L
                         } else {
                             zoom = 1f
                             offsetX = 0f
@@ -1235,11 +1237,29 @@ private fun PhotoViewer(
 
                             if (!swipeHandled) {
                                 swipeDistance += pan.x
-                                val threshold = 36.dp.toPx()
-                                if (swipeDistance <= -threshold && index < total - 1) {
+
+                                // Fast flicks should advance with a short movement;
+                                // deliberate slow swipes still use a comfortable distance.
+                                val now = android.os.SystemClock.uptimeMillis()
+                                val elapsed = if (lastPanTime == 0L) 16L
+                                    else (now - lastPanTime).coerceAtLeast(1L)
+                                lastPanTime = now
+                                val velocityX = pan.x * 1000f / elapsed
+                                val fastFlickDistance = 12.dp.toPx()
+                                val normalSwipeDistance = 28.dp.toPx()
+                                val isFastLeft = velocityX < -950f &&
+                                    swipeDistance <= -fastFlickDistance
+                                val isFastRight = velocityX > 950f &&
+                                    swipeDistance >= fastFlickDistance
+
+                                if ((isFastLeft || swipeDistance <= -normalSwipeDistance) &&
+                                    index < total - 1
+                                ) {
                                     swipeHandled = true
                                     onIndexChange(index + 1)
-                                } else if (swipeDistance >= threshold && index > 0) {
+                                } else if ((isFastRight || swipeDistance >= normalSwipeDistance) &&
+                                    index > 0
+                                ) {
                                     swipeHandled = true
                                     onIndexChange(index - 1)
                                 }
