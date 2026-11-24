@@ -424,7 +424,8 @@ MaterialTheme {
                     uri = current.uri,  
                     index = selectedIndex,  
                     total = displayedMedia.size,  
-                    onBack = { selectedIndex = -1 }  
+                    onBack = { selectedIndex = -1 },
+                    onIndexChange = { selectedIndex = it }
                 )  
             }  
         } else {  
@@ -1076,24 +1077,26 @@ private fun SelectedMediaPreview(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .pointerInput(index, mediaItems.size) {
-                var dragTotal = 0f
-                detectHorizontalDragGestures(
-                    onDragStart = { dragTotal = 0f },
-                    onHorizontalDrag = { change, dragAmount ->
-                        change.consume()
-                        dragTotal += dragAmount
-                    },
-                    onDragEnd = {
-                        val threshold = 60.dp.toPx()
-                        if (dragTotal < -threshold && index < mediaItems.lastIndex) {
-                            onIndexChange(index + 1)
-                        } else if (dragTotal > threshold && index > 0) {
-                            onIndexChange(index - 1)
-                        }
-                    },
-                    onDragCancel = { dragTotal = 0f }
-                )
+            .pointerInput(index, mediaItems.size, current.isVideo) {
+                if (current.isVideo) {
+                    var dragTotal = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragTotal = 0f },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            dragTotal += dragAmount
+                        },
+                        onDragEnd = {
+                            val threshold = 60.dp.toPx()
+                            if (dragTotal < -threshold && index < mediaItems.lastIndex) {
+                                onIndexChange(index + 1)
+                            } else if (dragTotal > threshold && index > 0) {
+                                onIndexChange(index - 1)
+                            }
+                        },
+                        onDragCancel = { dragTotal = 0f }
+                    )
+                }
             }
     ) {
         if (current.isVideo) {
@@ -1104,7 +1107,8 @@ private fun SelectedMediaPreview(
                 index = index,
                 total = mediaItems.size,
                 onBack = onBack,
-                showHeader = false
+                showHeader = false,
+                onIndexChange = onIndexChange
             )
         }
 
@@ -1140,37 +1144,91 @@ private fun PhotoViewer(
     index: Int,
     total: Int,
     onBack: () -> Unit,
-    showHeader: Boolean = true
+    showHeader: Boolean = true,
+    onIndexChange: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
 
-    var bitmap by remember(uri) {
-        mutableStateOf<Bitmap?>(null)
-    }
+    var bitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
+    var zoom by remember(uri) { mutableFloatStateOf(1f) }
+    var offsetX by remember(uri) { mutableFloatStateOf(0f) }
+    var offsetY by remember(uri) { mutableFloatStateOf(0f) }
 
     LaunchedEffect(uri) {
         bitmap = withContext(Dispatchers.IO) {
             try {
-                context.contentResolver
-                    .openInputStream(uri)?.use {
-                        android.graphics.BitmapFactory.decodeStream(it)
-                    }
+                context.contentResolver.openInputStream(uri)?.use {
+                    android.graphics.BitmapFactory.decodeStream(it)
+                }
             } catch (_: Exception) {
                 null
             }
         }
     }
 
-    Box(
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        val viewWidthPx = with(LocalDensity.current) { maxWidth.toPx() }
+        val viewHeightPx = with(LocalDensity.current) { maxHeight.toPx() }
+
         if (bitmap != null) {
             Image(
                 bitmap = bitmap!!.asImageBitmap(),
                 contentDescription = "Full photo",
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = zoom
+                        scaleY = zoom
+                        translationX = offsetX
+                        translationY = offsetY
+                    }
+                    .pointerInput(uri, viewWidthPx, viewHeightPx, index, total) {
+                        var swipeDistance = 0f
+                        detectTransformGestures { _, pan, zoomChange, _ ->
+                            val newZoom = (zoom * zoomChange).coerceIn(1f, 5f)
+                            if (newZoom > 1f) {
+                                val scaleFactor = newZoom / zoom
+                                val maxX = viewWidthPx * (newZoom - 1f) / 2f
+                                val maxY = viewHeightPx * (newZoom - 1f) / 2f
+                                offsetX = (offsetX * scaleFactor + pan.x).coerceIn(-maxX, maxX)
+                                offsetY = (offsetY * scaleFactor + pan.y).coerceIn(-maxY, maxY)
+                                zoom = newZoom
+                                swipeDistance = 0f
+                            } else {
+                                zoom = 1f
+                                offsetX = 0f
+                                offsetY = 0f
+                                swipeDistance += pan.x
+                                val threshold = 70.dp.toPx()
+                                if (swipeDistance <= -threshold && index < total - 1) {
+                                    swipeDistance = 0f
+                                    onIndexChange(index + 1)
+                                } else if (swipeDistance >= threshold && index > 0) {
+                                    swipeDistance = 0f
+                                    onIndexChange(index - 1)
+                                }
+                            }
+                        }
+                    }
+                    .pointerInput(uri) {
+                        detectTapGestures(
+                            onDoubleTap = {
+                                if (zoom > 1f) {
+                                    zoom = 1f
+                                    offsetX = 0f
+                                    offsetY = 0f
+                                } else {
+                                    zoom = 2.5f
+                                    offsetX = 0f
+                                    offsetY = 0f
+                                }
+                            }
+                        )
+                    },
                 contentScale = ContentScale.Fit
             )
         } else {
@@ -1195,9 +1253,7 @@ private fun PhotoViewer(
                     fontSize = 34.sp,
                     modifier = Modifier.clickable(onClick = onBack)
                 )
-
                 Spacer(Modifier.width(20.dp))
-
                 Text(
                     "Photo ${index + 1} / $total",
                     color = Color.White,
@@ -1207,7 +1263,6 @@ private fun PhotoViewer(
         }
     }
 }
-
 
 @Composable
 private fun VideoPlayer(
