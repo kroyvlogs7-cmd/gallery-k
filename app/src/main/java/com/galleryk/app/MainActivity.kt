@@ -33,6 +33,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
@@ -679,19 +680,38 @@ MaterialTheme {
 
                                 fun applyRowAt(y: Float, add: Boolean) {
                                     val visible = selectionGridState.layoutInfo.visibleItemsInfo
+                                        .filter { info -> !selectionModeState.value || info.index % 21 != 0 }
                                     if (visible.isEmpty()) return
                                     val hit = visible.minByOrNull { info ->
                                         kotlin.math.abs((info.offset.y + info.size.height / 2f) - y)
                                     } ?: return
-                                    val targetRowStart = (hit.index / 3) * 3
-                                    val from = if (lastRowStartIndex < 0) targetRowStart else lastRowStartIndex
-                                    val rowStarts = if (from <= targetRowStart) {
-                                        (from..targetRowStart step 3).toList()
+                                    // In selection mode, one full-width Select All item is
+                                    // inserted before every group of 20 media items.
+                                    val mediaIndex = if (selectionModeState.value) {
+                                        hit.index - (hit.index / 21 + 1)
+                                    } else hit.index
+                                    val safeMediaIndex = mediaIndex.coerceIn(0, displayedMedia.lastIndex)
+                                    val groupNumber = if (selectionModeState.value) safeMediaIndex / 20 else 0
+                                    val indexInGroup = if (selectionModeState.value) safeMediaIndex % 20 else safeMediaIndex
+                                    val targetRowNumber = if (selectionModeState.value) {
+                                        groupNumber * 7 + indexInGroup / 3
+                                    } else safeMediaIndex / 3
+                                    val from = if (lastRowStartIndex < 0) targetRowNumber else lastRowStartIndex
+                                    val rowNumbers = if (from <= targetRowNumber) {
+                                        (from..targetRowNumber).toList()
                                     } else {
-                                        (from downTo targetRowStart step 3).toList()
+                                        (from downTo targetRowNumber).toList()
                                     }
-                                    val rowUris = rowStarts.flatMap { rowStart ->
-                                        (rowStart until (rowStart + 3).coerceAtMost(displayedMedia.size))
+                                    val rowUris = rowNumbers.flatMap { rowNumber ->
+                                        val rowGroup = if (selectionModeState.value) rowNumber / 7 else 0
+                                        val rowInGroup = if (selectionModeState.value) rowNumber % 7 else rowNumber
+                                        val rowStart = if (selectionModeState.value) {
+                                            rowGroup * 20 + rowInGroup * 3
+                                        } else rowInGroup * 3
+                                        val rowEnd = if (selectionModeState.value) {
+                                            (rowStart + 3).coerceAtMost((rowGroup + 1) * 20)
+                                        } else (rowStart + 3).coerceAtMost(displayedMedia.size)
+                                        (rowStart until rowEnd)
                                             .mapNotNull { index -> displayedMedia.getOrNull(index)?.uri }
                                     }.toSet()
                                     val updated = if (add) dragSelectedUris + rowUris else dragSelectedUris - rowUris
@@ -778,31 +798,88 @@ MaterialTheme {
                                 state = selectionGridState,
                                 modifier = Modifier.fillMaxSize()
                             ) {
+                                val groupSize = 20
+                                val groupCount = if (selectionMode) {
+                                    (displayedMedia.size + groupSize - 1) / groupSize
+                                } else 0
+                                val totalGridItems = displayedMedia.size + groupCount
+
                                 items(
-                                    displayedMedia,
-                                    key = { it.uri.toString() }
-                                ) { media ->
-                                    MediaThumbnail(
-                                        media = media,
-                                        selected = media.uri in selectedUris,
-                                        onClick = {
-                                            if (selectionMode) {
-                                                selectedUris =
-                                                    if (media.uri in selectedUris) {
-                                                        selectedUris - media.uri
-                                                    } else {
-                                                        selectedUris + media.uri
-                                                    }
-                                                if (selectedUris.isEmpty()) selectionMode = false
-                                            } else {
-                                                selectedIndex = displayedMedia.indexOf(media)
-                                            }
-                                        },
-                                        onLongClick = {
-                                            selectionMode = true
-                                            selectedUris = selectedUris + media.uri
+                                    count = totalGridItems,
+                                    key = { gridIndex ->
+                                        if (selectionMode && gridIndex % 21 == 0) {
+                                            "select_all_group_${gridIndex / 21}"
+                                        } else {
+                                            val mediaIndex = if (selectionMode) {
+                                                gridIndex - (gridIndex / 21 + 1)
+                                            } else gridIndex
+                                            displayedMedia[mediaIndex].uri.toString()
                                         }
-                                    )
+                                    },
+                                    span = { gridIndex ->
+                                        if (selectionMode && gridIndex % 21 == 0) {
+                                            GridItemSpan(maxLineSpan)
+                                        } else GridItemSpan(1)
+                                    }
+                                ) { gridIndex ->
+                                    if (selectionMode && gridIndex % 21 == 0) {
+                                        val groupNumber = gridIndex / 21
+                                        val startIndex = groupNumber * groupSize
+                                        val endExclusive = (startIndex + groupSize)
+                                            .coerceAtMost(displayedMedia.size)
+                                        val groupUris = displayedMedia
+                                            .subList(startIndex, endExclusive)
+                                            .map { it.uri }
+                                        val allGroupSelected = groupUris.all { it in selectedUris }
+
+                                        TextButton(
+                                            onClick = {
+                                                selectedUris = if (allGroupSelected) {
+                                                    selectedUris - groupUris.toSet()
+                                                } else {
+                                                    selectedUris + groupUris
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                if (allGroupSelected) {
+                                                    "Deselect All (${startIndex + 1}–$endExclusive)"
+                                                } else {
+                                                    "Select All (${startIndex + 1}–$endExclusive)"
+                                                },
+                                                color = Color.White
+                                            )
+                                        }
+                                    } else {
+                                        val mediaIndex = if (selectionMode) {
+                                            gridIndex - (gridIndex / 21 + 1)
+                                        } else gridIndex
+                                        val media = displayedMedia[mediaIndex]
+                                        MediaThumbnail(
+                                            media = media,
+                                            selected = media.uri in selectedUris,
+                                            onClick = {
+                                                if (selectionMode) {
+                                                    selectedUris =
+                                                        if (media.uri in selectedUris) {
+                                                            selectedUris - media.uri
+                                                        } else {
+                                                            selectedUris + media.uri
+                                                        }
+                                                    if (selectedUris.isEmpty()) selectionMode = false
+                                                } else {
+                                                    selectedIndex = mediaIndex
+                                                }
+                                            },
+                                            onLongClick = {
+                                                selectionMode = true
+                                                selectedUris = selectedUris + media.uri
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }  
