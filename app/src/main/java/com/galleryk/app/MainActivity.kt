@@ -661,30 +661,27 @@ MaterialTheme {
 
                         val selectionGridState = rememberLazyGridState()
                         val selectionScope = rememberCoroutineScope()
+                        val selectionModeState = rememberUpdatedState(selectionMode)
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .pointerInput(selectionMode, displayedMedia) {
-                            if (selectionMode) {
+                                // Do not key this pointerInput with selectionMode: turning
+                                // selection on after a long-press must not cancel the same touch.
+                                .pointerInput(displayedMedia) {
                                 var lastY = 0f
                                 var accumulatedDy = 0f
-                                var edgeDirection = 0
+                                var scrollDirection = 0
                                 var dragDirection = 1
                                 var lastRowStartIndex = -1
+                                var trackingSelectionDrag = false
                                 var autoScrollJob: kotlinx.coroutines.Job? = null
                                 var dragSelectedUris = selectedUris
 
                                 fun applyRowAt(y: Float, add: Boolean) {
                                     val visible = selectionGridState.layoutInfo.visibleItemsInfo
                                     if (visible.isEmpty()) return
-
-                                    // Pick the row nearest to the finger, even when it is
-                                    // between rows or just outside the first/last visible item.
-                                    // This keeps deselection moving while the grid auto-scrolls.
                                     val hit = visible.minByOrNull { info ->
-                                        kotlin.math.abs(
-                                            (info.offset.y + info.size.height / 2f) - y
-                                        )
+                                        kotlin.math.abs((info.offset.y + info.size.height / 2f) - y)
                                     } ?: return
                                     val targetRowStart = (hit.index / 3) * 3
                                     val from = if (lastRowStartIndex < 0) targetRowStart else lastRowStartIndex
@@ -705,64 +702,75 @@ MaterialTheme {
                                     lastRowStartIndex = targetRowStart
                                 }
 
-
                                 detectDragGestures(
                                     onDragStart = { start ->
-                                        lastY = start.y
-                                        accumulatedDy = 0f
-                                        edgeDirection = 0
-                                        applyRowAt(start.y, add = true)
+                                        trackingSelectionDrag = selectionModeState.value
+                                        if (trackingSelectionDrag) {
+                                            lastY = start.y
+                                            accumulatedDy = 0f
+                                            scrollDirection = 0
+                                            dragDirection = 1
+                                            lastRowStartIndex = -1
+                                            dragSelectedUris = selectedUris
+                                            applyRowAt(start.y, add = true)
+                                        }
                                     },
                                     onDrag = { change, _ ->
-                                        change.consume()
-                                        val y = change.position.y
-                                        val dy = y - lastY
-                                        accumulatedDy += dy
-                                        // Ignore tiny jitter; switch selection direction only after a deliberate move.
-                                        if (accumulatedDy >= 12f) {
-                                            dragDirection = 1
-                                            accumulatedDy = 0f
-                                        } else if (accumulatedDy <= -12f) {
-                                            dragDirection = -1
-                                            accumulatedDy = 0f
-                                        }
-                                        applyRowAt(y, add = dragDirection > 0)
-                                        lastY = y
-
-                                        // Auto-scroll only when the finger reaches the top/bottom edge zone.
-                                        val edgeZone = 80f
-                                        edgeDirection = when {
-                                            y < edgeZone -> -1
-                                            y > size.height - edgeZone -> 1
-                                            else -> 0
-                                        }
-                                        if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
-                                            autoScrollJob = selectionScope.launch {
-                                                while (edgeDirection != 0) {
-                                                    val direction = edgeDirection
-                                                    selectionGridState.scrollBy(direction * 8f)
-                                                    applyRowAt(lastY, add = dragDirection > 0)
-                                                    kotlinx.coroutines.delay(16L)
-                                                }
+                                        if (trackingSelectionDrag && selectionModeState.value) {
+                                            change.consume()
+                                            val y = change.position.y
+                                            accumulatedDy += y - lastY
+                                            if (accumulatedDy >= 10f) {
+                                                dragDirection = 1
+                                                accumulatedDy = 0f
+                                            } else if (accumulatedDy <= -10f) {
+                                                dragDirection = -1
+                                                accumulatedDy = 0f
                                             }
-                                        } else if (edgeDirection == 0) {
-                                            autoScrollJob?.cancel()
-                                            autoScrollJob = null
+                                            applyRowAt(y, add = dragDirection > 0)
+                                            lastY = y
+
+                                            // Up-scroll can begin from the middle; down-scroll
+                                            // begins only in the lower 30% of the screen.
+                                            scrollDirection = when {
+                                                y <= size.height * 0.50f -> -1
+                                                y >= size.height * 0.70f -> 1
+                                                else -> 0
+                                            }
+                                            if (scrollDirection != 0 && autoScrollJob?.isActive != true) {
+                                                autoScrollJob = selectionScope.launch {
+                                                    while (scrollDirection != 0 && trackingSelectionDrag) {
+                                                        val direction = scrollDirection
+                                                        val threshold = if (direction < 0) size.height * 0.50f else size.height * 0.70f
+                                                        val distance = if (direction < 0) threshold - lastY else lastY - threshold
+                                                        val maxDistance = if (direction < 0) threshold else size.height - threshold
+                                                        val speed = (3f + (distance / maxDistance.coerceAtLeast(1f)) * 7f)
+                                                            .coerceIn(3f, 10f)
+                                                        selectionGridState.scrollBy(direction * speed)
+                                                        applyRowAt(lastY, add = dragDirection > 0)
+                                                        kotlinx.coroutines.delay(16L)
+                                                    }
+                                                }
+                                            } else if (scrollDirection == 0) {
+                                                autoScrollJob?.cancel()
+                                                autoScrollJob = null
+                                            }
                                         }
                                     },
                                     onDragEnd = {
-                                        edgeDirection = 0
+                                        trackingSelectionDrag = false
+                                        scrollDirection = 0
                                         autoScrollJob?.cancel()
                                         autoScrollJob = null
                                     },
                                     onDragCancel = {
-                                        edgeDirection = 0
+                                        trackingSelectionDrag = false
+                                        scrollDirection = 0
                                         autoScrollJob?.cancel()
                                         autoScrollJob = null
                                     }
                                 )
                             }
-                        }
                         ) {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(3),
