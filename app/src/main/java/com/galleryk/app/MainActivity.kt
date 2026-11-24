@@ -1893,14 +1893,14 @@ private fun PrivacyFolderScreen(
     LaunchedEffect(Unit) { refreshSavedFiles() }
 
     val photoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments()
+        ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
         pickedPhotos = uris
         onPickerEnd()
     }
 
     val videoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments()
+        ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
         pickedVideos = uris
         onPickerEnd()
@@ -1968,8 +1968,8 @@ private fun PrivacyFolderScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF101114))
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
             text = "‹  Back",
@@ -2002,24 +2002,42 @@ private fun PrivacyFolderScreen(
                 }
             }
         }
-        Text("Choose photos and videos", color = Color.LightGray, fontSize = 16.sp)
-        OutlinedButton(onClick = onChangePin, modifier = Modifier.fillMaxWidth()) { Text("Change PIN") }
+        OutlinedButton(
+            onClick = onChangePin,
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            contentPadding = PaddingValues(vertical = 4.dp)
+        ) { Text("Change PIN") }
 
-        Button(
-            onClick = {
-                onPickerStart()
-                photoPicker.launch(arrayOf("image/*"))
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Add Photos (${pickedPhotos.size})") }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = {
+                    onPickerStart()
+                    photoPicker.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                        )
+                    )
+                },
+                modifier = Modifier.weight(1f).height(48.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+            ) { Text("Add Photos (${pickedPhotos.size})") }
 
-        Button(
-            onClick = {
-                onPickerStart()
-                videoPicker.launch(arrayOf("video/*"))
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Add Videos (${pickedVideos.size})") }
+            Button(
+                onClick = {
+                    onPickerStart()
+                    videoPicker.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            ActivityResultContracts.PickVisualMedia.VideoOnly
+                        )
+                    )
+                },
+                modifier = Modifier.weight(1f).height(48.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)
+            ) { Text("Add Videos (${pickedVideos.size})") }
+        }
 
         Text(
             text = "Selected: ${pickedPhotos.size} photos • ${pickedVideos.size} videos",
@@ -2222,70 +2240,98 @@ private fun PrivacyFolderScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .pointerInput(filteredFiles, selectedPrivateFiles.isNotEmpty()) {
-                        if (selectedPrivateFiles.isNotEmpty()) {
+                    // Keep this gesture detector alive when selection starts/changes.
+                    .pointerInput(filteredFiles) {
                         var lastX = 0f
                         var lastY = 0f
-                        var privateEdgeDirection = 0
-                        var privateAutoScrollJob: kotlinx.coroutines.Job? = null
-                        fun selectPrivateAt(x: Float, y: Float) {
-                            val hit = privateGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                                x >= info.offset.x && x < info.offset.x + info.size.width &&
-                                y >= info.offset.y && y < info.offset.y + info.size.height
-                            }
-                            hit?.let { info ->
-                                filteredFiles.getOrNull(info.index)?.let { item ->
-                                    selectedPrivateFiles = latestPrivateSelected + item.absolutePath
-                                }
+                        var edgeDirection = 0
+                        var dragSelecting = false
+                        var dragSelectedPaths = mutableSetOf<String>()
+                        var autoScrollJob: kotlinx.coroutines.Job? = null
+
+                        fun selectAt(x: Float, y: Float) {
+                            val visible = privateGridState.layoutInfo.visibleItemsInfo
+                            if (visible.isEmpty()) return
+                            val row = visible.minByOrNull { info ->
+                                val centerY = info.offset.y + info.size.height / 2f
+                                kotlin.math.abs(centerY - y)
+                            } ?: return
+                            val columnItem = visible
+                                .filter { it.offset.y == row.offset.y }
+                                .minByOrNull { info ->
+                                    val centerX = info.offset.x + info.size.width / 2f
+                                    kotlin.math.abs(centerX - x)
+                                } ?: row
+                            filteredFiles.getOrNull(columnItem.index)?.let { file ->
+                                dragSelectedPaths.add(file.absolutePath)
+                                selectedPrivateFiles = dragSelectedPaths.toSet()
                             }
                         }
+
                         detectDragGestures(
                             onDragStart = { start ->
+                                dragSelectedPaths = latestPrivateSelected.value.toMutableSet()
+                                dragSelecting = dragSelectedPaths.isNotEmpty()
                                 lastX = start.x
                                 lastY = start.y
-                                selectPrivateAt(start.x, start.y)
+                                if (dragSelecting) selectAt(lastX, lastY)
                             },
                             onDrag = { change, _ ->
-                                change.consume()
-                                val pos = change.position
-                                val dx = pos.x - lastX
-                                val dy = pos.y - lastY
-                                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                val steps = kotlin.math.ceil(distance / 12f).toInt().coerceAtLeast(1)
-                                for (step in 1..steps) {
-                                    val f = step.toFloat() / steps
-                                    selectPrivateAt(lastX + dx * f, lastY + dy * f)
-                                }
-                                lastX = pos.x
-                                lastY = pos.y
-                                val edge = 100.dp.toPx()
-                                privateEdgeDirection = when {
-                                    pos.y < edge -> -1
-                                    pos.y > size.height - edge -> 1
-                                    else -> 0
-                                }
-                                if (privateEdgeDirection != 0 && privateAutoScrollJob?.isActive != true) {
-                                    privateAutoScrollJob = privateSelectionScope.launch {
-                                        while (privateEdgeDirection != 0) {
-                                            privateGridState.scrollBy(privateEdgeDirection * 10f)
-                                            selectPrivateAt(lastX, lastY)
-                                            kotlinx.coroutines.delay(16L)
+                                if (dragSelecting) {
+                                    change.consume()
+                                    val x = change.position.x
+                                    val y = change.position.y
+                                    val dx = x - lastX
+                                    val dy = y - lastY
+                                    val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                                    val steps = kotlin.math.ceil(distance / 10f).toInt().coerceAtLeast(1)
+                                    for (step in 1..steps) {
+                                        val fraction = step.toFloat() / steps
+                                        selectAt(lastX + dx * fraction, lastY + dy * fraction)
+                                    }
+                                    lastX = x
+                                    lastY = y
+
+                                    val edgeZone = 120.dp.toPx()
+                                    edgeDirection = when {
+                                        y < edgeZone -> -1
+                                        y > size.height - edgeZone -> 1
+                                        else -> 0
+                                    }
+                                    if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
+                                        autoScrollJob = launch {
+                                            while (edgeDirection != 0 && dragSelecting) {
+                                                val direction = edgeDirection
+                                                val distanceToEdge = if (direction < 0) {
+                                                    (edgeZone - lastY).coerceAtLeast(0f)
+                                                } else {
+                                                    (lastY - (size.height - edgeZone)).coerceAtLeast(0f)
+                                                }
+                                                val speed = (8f + distanceToEdge / edgeZone * 22f).coerceIn(8f, 30f)
+                                                privateGridState.scrollBy(direction * speed)
+                                                selectAt(lastX, lastY.coerceIn(0f, size.height.toFloat()))
+                                                kotlinx.coroutines.delay(16L)
+                                            }
                                         }
+                                    } else if (edgeDirection == 0) {
+                                        autoScrollJob?.cancel()
+                                        autoScrollJob = null
                                     }
                                 }
                             },
                             onDragEnd = {
-                                privateEdgeDirection = 0
-                                privateAutoScrollJob?.cancel()
-                                privateAutoScrollJob = null
+                                dragSelecting = false
+                                edgeDirection = 0
+                                autoScrollJob?.cancel()
+                                autoScrollJob = null
                             },
                             onDragCancel = {
-                                privateEdgeDirection = 0
-                                privateAutoScrollJob?.cancel()
-                                privateAutoScrollJob = null
+                                dragSelecting = false
+                                edgeDirection = 0
+                                autoScrollJob?.cancel()
+                                autoScrollJob = null
                             }
                         )
-                        }
                     }
             ) {
             LazyVerticalGrid(
