@@ -665,81 +665,97 @@ MaterialTheme {
                             modifier = Modifier
                                 .fillMaxSize()
                                 .pointerInput(selectionMode, displayedMedia) {
-                                    if (selectionMode) {
-                                        var lastY = 0f
-                                        var edgeDirection = 0
-                                        var dragDirection = 1
-                                        var lastRowStartIndex = -1
-                                        var autoScrollJob: kotlinx.coroutines.Job? = null
-                                        var dragSelectedUris = selectedUris
+                            if (selectionMode) {
+                                var lastY = 0f
+                                var accumulatedDy = 0f
+                                var edgeDirection = 0
+                                var dragDirection = 1
+                                var lastRowStartIndex = -1
+                                var autoScrollJob: kotlinx.coroutines.Job? = null
+                                var dragSelectedUris = selectedUris
 
-                                        // Track crossed grid rows by item index, not small pixel samples.
-                                        // Batch each crossed range into one state update to reduce flicker.
-                                        fun applyRowAt(y: Float, add: Boolean) {
-                                            val visible = selectionGridState.layoutInfo.visibleItemsInfo
-                                            val hit = visible.firstOrNull { info ->
-                                                y >= info.offset.y && y < info.offset.y + info.size.height
-                                            } ?: return
-                                            val targetRowStart = (hit.index / 3) * 3
-                                            val from = if (lastRowStartIndex < 0) targetRowStart else lastRowStartIndex
-                                            val rowStarts = if (from <= targetRowStart) {
-                                                (from..targetRowStart step 3).toList()
-                                            } else {
-                                                (from downTo targetRowStart step 3).toList()
-                                            }
-                                            val rowUris = rowStarts.flatMap { rowStart ->
-                                                (rowStart until (rowStart + 3).coerceAtMost(displayedMedia.size))
-                                                    .mapNotNull { index -> displayedMedia.getOrNull(index)?.uri }
-                                            }.toSet()
-                                            val updated = if (add) dragSelectedUris + rowUris else dragSelectedUris - rowUris
-                                            if (updated != dragSelectedUris) {
-                                                dragSelectedUris = updated
-                                                selectedUris = updated
-                                            }
-                                            lastRowStartIndex = targetRowStart
-                                        }
-
-
-                                        detectDragGestures(
-                                            onDragStart = { start ->
-                                                lastY = start.y
-                                                applyRowAt(start.y, add = true)
-                                            },
-                                            onDrag = { change, _ ->
-                                                change.consume()
-                                                val y = change.position.y
-                                                val dy = y - lastY
-                                                if (dy != 0f) dragDirection = if (dy > 0f) 1 else -1
-                                                // Process the destination row once per pointer event; avoid
-                                                // multiple rapid selection-state updates causing visual flicker.
-                                                applyRowAt(y, add = dragDirection > 0)
-                                                lastY = y
-                                                // Scroll in the direction of finger movement from anywhere on the screen.
-                                                if (dy != 0f) edgeDirection = dragDirection
-                                                if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
-                                                    autoScrollJob = selectionScope.launch {
-                                                        while (edgeDirection != 0) {
-                                                            val direction = edgeDirection
-                                                            selectionGridState.scrollBy(direction * 10f)
-                                                            applyRowAt(lastY, add = direction > 0)
-                                                            kotlinx.coroutines.delay(16L)
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                            onDragEnd = {
-                                                edgeDirection = 0
-                                                autoScrollJob?.cancel()
-                                                autoScrollJob = null
-                                            },
-                                            onDragCancel = {
-                                                edgeDirection = 0
-                                                autoScrollJob?.cancel()
-                                                autoScrollJob = null
-                                            }
-                                        )
+                                fun applyRowAt(y: Float, add: Boolean) {
+                                    val visible = selectionGridState.layoutInfo.visibleItemsInfo
+                                    val hit = visible.firstOrNull { info ->
+                                        y >= info.offset.y && y < info.offset.y + info.size.height
+                                    } ?: return
+                                    val targetRowStart = (hit.index / 3) * 3
+                                    val from = if (lastRowStartIndex < 0) targetRowStartIndex else lastRowStartIndex
+                                    val rowStarts = if (from <= targetRowStartIndex) {
+                                        (from..targetRowStartIndex step 3).toList()
+                                    } else {
+                                        (from downTo targetRowStartIndex step 3).toList()
                                     }
+                                    val rowUris = rowStarts.flatMap { rowStart ->
+                                        (rowStart until (rowStart + 3).coerceAtMost(displayedMedia.size))
+                                            .mapNotNull { index -> displayedMedia.getOrNull(index)?.uri }
+                                    }.toSet()
+                                    val updated = if (add) dragSelectedUris + rowUris else dragSelectedUris - rowUris
+                                    if (updated != dragSelectedUris) {
+                                        dragSelectedUris = updated
+                                        selectedUris = updated
+                                    }
+                                    lastRowStartIndex = targetRowStart
                                 }
+
+
+                                detectDragGestures(
+                                    onDragStart = { start ->
+                                        lastY = start.y
+                                        accumulatedDy = 0f
+                                        edgeDirection = 0
+                                        applyRowAt(start.y, add = true)
+                                    },
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        val y = change.position.y
+                                        val dy = y - lastY
+                                        accumulatedDy += dy
+                                        // Ignore tiny jitter; switch selection direction only after a deliberate move.
+                                        if (accumulatedDy >= 12f) {
+                                            dragDirection = 1
+                                            accumulatedDy = 0f
+                                        } else if (accumulatedDy <= -12f) {
+                                            dragDirection = -1
+                                            accumulatedDy = 0f
+                                        }
+                                        applyRowAt(y, add = dragDirection > 0)
+                                        lastY = y
+
+                                        // Auto-scroll only when the finger reaches the top/bottom edge zone.
+                                        val edgeZone = 80f
+                                        edgeDirection = when {
+                                            y < edgeZone -> -1
+                                            y > size.height - edgeZone -> 1
+                                            else -> 0
+                                        }
+                                        if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
+                                            autoScrollJob = selectionScope.launch {
+                                                while (edgeDirection != 0) {
+                                                    val direction = edgeDirection
+                                                    selectionGridState.scrollBy(direction * 8f)
+                                                    applyRowAt(lastY, add = dragDirection > 0)
+                                                    kotlinx.coroutines.delay(16L)
+                                                }
+                                            }
+                                        } else if (edgeDirection == 0) {
+                                            autoScrollJob?.cancel()
+                                            autoScrollJob = null
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        edgeDirection = 0
+                                        autoScrollJob?.cancel()
+                                        autoScrollJob = null
+                                    },
+                                    onDragCancel = {
+                                        edgeDirection = 0
+                                        autoScrollJob?.cancel()
+                                        autoScrollJob = null
+                                    }
+                                )
+                            }
+                        }
                         ) {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(3),
