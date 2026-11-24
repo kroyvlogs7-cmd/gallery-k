@@ -743,6 +743,7 @@ MaterialTheme {
                                                 autoScrollJob = selectionScope.launch {
                                                     while (scrollDirection != 0 && trackingSelectionDrag) {
                                                         val direction = scrollDirection
+                                                        dragDirection = direction
                                                         val threshold = if (direction < 0) size.height * 0.50f else size.height * 0.70f
                                                         val distance = if (direction < 0) threshold - lastY else lastY - threshold
                                                         val maxDistance = if (direction < 0) threshold else size.height - threshold
@@ -806,9 +807,10 @@ MaterialTheme {
                                             }
                                         },
                                         onLongClick = {
-                                            selectionMode = true
-                                            selectedUris = selectedUris + media.uri
-                                        }
+                                            // Long-press selection is handled by the parent
+                                            // grid gesture so the same finger can continue dragging.
+                                        },
+                                        useLongClick = false
                                     )
                                 }
                             }
@@ -867,7 +869,8 @@ private fun MediaThumbnail(
 media: GalleryMedia,
 selected: Boolean,
 onClick: () -> Unit,
-onLongClick: () -> Unit
+onLongClick: () -> Unit,
+useLongClick: Boolean = true
 ) {
 val context = LocalContext.current
 
