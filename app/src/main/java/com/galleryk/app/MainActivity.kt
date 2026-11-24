@@ -676,8 +676,15 @@ MaterialTheme {
 
                                 fun applyRowAt(y: Float, add: Boolean) {
                                     val visible = selectionGridState.layoutInfo.visibleItemsInfo
-                                    val hit = visible.firstOrNull { info ->
-                                        y >= info.offset.y && y < info.offset.y + info.size.height
+                                    if (visible.isEmpty()) return
+
+                                    // Pick the row nearest to the finger, even when it is
+                                    // between rows or just outside the first/last visible item.
+                                    // This keeps deselection moving while the grid auto-scrolls.
+                                    val hit = visible.minByOrNull { info ->
+                                        kotlin.math.abs(
+                                            (info.offset.y + info.size.height / 2f) - y
+                                        )
                                     } ?: return
                                     val targetRowStart = (hit.index / 3) * 3
                                     val from = if (lastRowStartIndex < 0) targetRowStart else lastRowStartIndex
