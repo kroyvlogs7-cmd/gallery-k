@@ -28,6 +28,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -702,9 +703,10 @@ MaterialTheme {
                                     lastRowStartIndex = targetRowStart
                                 }
 
-                                detectDragGestures(
+                                detectDragGesturesAfterLongPress(
                                     onDragStart = { start ->
-                                        trackingSelectionDrag = selectionModeState.value
+                                        trackingSelectionDrag = true
+                                        if (!selectionModeState.value) selectionMode = true
                                         if (trackingSelectionDrag) {
                                             lastY = start.y
                                             accumulatedDy = 0f
@@ -716,7 +718,7 @@ MaterialTheme {
                                         }
                                     },
                                     onDrag = { change, _ ->
-                                        if (trackingSelectionDrag && selectionModeState.value) {
+                                        if (trackingSelectionDrag) {
                                             change.consume()
                                             val y = change.position.y
                                             accumulatedDy += y - lastY
@@ -746,8 +748,13 @@ MaterialTheme {
                                                         val maxDistance = if (direction < 0) threshold else size.height - threshold
                                                         val speed = (3f + (distance / maxDistance.coerceAtLeast(1f)) * 7f)
                                                             .coerceIn(3f, 10f)
-                                                        selectionGridState.scrollBy(direction * speed)
-                                                        applyRowAt(lastY, add = dragDirection > 0)
+                                                        val beforeIndex = selectionGridState.firstVisibleItemIndex
+                                                        val beforeOffset = selectionGridState.firstVisibleItemScrollOffset
+                                                        val moved = selectionGridState.scrollBy(direction * speed)
+                                                        if (moved != 0f || beforeIndex != selectionGridState.firstVisibleItemIndex || beforeOffset != selectionGridState.firstVisibleItemScrollOffset) {
+                                                            // Selection must follow the scroll itself, even when the finger is stationary.
+                                                            applyRowAt(lastY, add = direction > 0)
+                                                        }
                                                         kotlinx.coroutines.delay(16L)
                                                     }
                                                 }
