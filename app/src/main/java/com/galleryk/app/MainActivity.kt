@@ -714,12 +714,8 @@ MaterialTheme {
                                                 // multiple rapid selection-state updates causing visual flicker.
                                                 applyRowAt(y, add = dragDirection > 0)
                                                 lastY = y
-                                                val edgeZone = 100.dp.toPx()
-                                                edgeDirection = when {
-                                                    y < edgeZone -> -1
-                                                    y > size.height - edgeZone -> 1
-                                                    else -> 0
-                                                }
+                                                // Scroll in the direction of finger movement from anywhere on the screen.
+                                                if (dy != 0f) edgeDirection = dragDirection
                                                 if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
                                                     autoScrollJob = selectionScope.launch {
                                                         while (edgeDirection != 0) {
