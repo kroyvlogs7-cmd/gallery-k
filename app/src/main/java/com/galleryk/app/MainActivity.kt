@@ -2270,7 +2270,7 @@ private fun PrivacyFolderScreen(
 
                         detectDragGestures(
                             onDragStart = { start ->
-                                dragSelectedPaths = latestPrivateSelected.value.toMutableSet()
+                                dragSelectedPaths = latestPrivateSelected.toMutableSet()
                                 dragSelecting = dragSelectedPaths.isNotEmpty()
                                 lastX = start.x
                                 lastY = start.y
@@ -2299,7 +2299,7 @@ private fun PrivacyFolderScreen(
                                         else -> 0
                                     }
                                     if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
-                                        autoScrollJob = launch {
+                                        autoScrollJob = privateSelectionScope.launch {
                                             while (edgeDirection != 0 && dragSelecting) {
                                                 val direction = edgeDirection
                                                 val distanceToEdge = if (direction < 0) {
