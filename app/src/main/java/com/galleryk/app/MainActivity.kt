@@ -719,7 +719,7 @@ MaterialTheme {
                                         dragSelectedUris = updated
                                         selectedUris = updated
                                     }
-                                    lastRowStartIndex = targetRowStart
+                                    lastRowStartIndex = targetRowNumber
                                 }
 
                                 detectDragGestures(
