@@ -1842,6 +1842,12 @@ private fun PrivacyFolderScreen(
     var mediaFilter by remember { mutableStateOf("All") }
     var selectedPrivateFiles by remember { mutableStateOf(setOf<String>()) }
     var privacyMenuExpanded by remember { mutableStateOf(false) }
+    var showPrivacyPicker by remember { mutableStateOf(false) }
+    var pickerMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
+    var pickerAlbums by remember { mutableStateOf(listOf<PhotoAlbum>()) }
+    var pickerTab by remember { mutableStateOf("Photos") }
+    var pickerAlbumId by remember { mutableStateOf<String?>(null) }
+    var pickerSelectedUris by remember { mutableStateOf(setOf<Uri>()) }
 
     val privatePhotosDir = remember { File(context.filesDir, "privacy_folder/photos") }
     val privateVideosDir = remember { File(context.filesDir, "privacy_folder/videos") }
@@ -1909,16 +1915,26 @@ private fun PrivacyFolderScreen(
 
     LaunchedEffect(Unit) { refreshSavedFiles() }
 
-    val mediaPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        pickedPhotos = uris.filter { uri ->
-            context.contentResolver.getType(uri)?.startsWith("image/") == true
+    LaunchedEffect(showPrivacyPicker) {
+        if (showPrivacyPicker) {
+            try {
+                val result = loadGallery(context)
+                pickerMedia = result.first
+                pickerAlbums = result.second
+            } catch (e: Exception) {
+                Toast.makeText(context, "Could not load Gallery media: ${e.message}", Toast.LENGTH_LONG).show()
+            }
         }
-        pickedVideos = uris.filter { uri ->
-            context.contentResolver.getType(uri)?.startsWith("video/") == true
+    }
+
+    BackHandler(enabled = showPrivacyPicker) {
+        if (pickerAlbumId != null) {
+            pickerAlbumId = null
+        } else {
+            showPrivacyPicker = false
+            pickerSelectedUris = emptySet()
+            onPickerEnd()
         }
-        onPickerEnd()
     }
 
     val deleteOriginalsLauncher = rememberLauncherForActivityResult(
@@ -1930,6 +1946,219 @@ private fun PrivacyFolderScreen(
         } else {
             Toast.makeText(context, "Private copies saved. Originals were kept in Gallery.", Toast.LENGTH_LONG).show()
         }
+    }
+
+    if (showPrivacyPicker) {
+        val pickerAlbum = pickerAlbums.find { it.id == pickerAlbumId }
+        val pickerVisibleMedia = when {
+            pickerAlbum != null -> pickerAlbum.media
+            pickerTab == "Videos" -> pickerMedia.filter { it.isVideo }
+            pickerTab == "Albums" -> emptyList()
+            else -> pickerMedia.filter { !it.isVideo }
+        }
+        val pickerGridState = rememberLazyGridState()
+        val pickerScope = rememberCoroutineScope()
+        val latestPickerSelection by rememberUpdatedState(pickerSelectedUris)
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF101114))
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (pickerAlbum != null) "‹  ${pickerAlbum.name}" else "‹  Gallery",
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f).clickable {
+                        if (pickerAlbumId != null) pickerAlbumId = null
+                        else {
+                            showPrivacyPicker = false
+                            pickerSelectedUris = emptySet()
+                            onPickerEnd()
+                        }
+                    }
+                )
+                TextButton(onClick = {
+                    val visible = pickerVisibleMedia.map { it.uri }.toSet()
+                    pickerSelectedUris = if (visible.isNotEmpty() && visible.all { it in pickerSelectedUris }) {
+                        pickerSelectedUris - visible
+                    } else pickerSelectedUris + visible
+                }) {
+                    Text("Select All", color = Color.White)
+                }
+            }
+
+            if (pickerAlbum == null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("Photos", "Videos", "Albums").forEach { tab ->
+                        val active = pickerTab == tab
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (active) Color(0xFF6550A4) else Color(0xFF29262D))
+                                .clickable { pickerTab = tab }
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(tab, color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+
+            if (pickerAlbum == null && pickerTab == "Albums") {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 8.dp)
+                ) {
+                    items(pickerAlbums, key = { it.id }) { album ->
+                        AlbumCard(album) { pickerAlbumId = album.id }
+                    }
+                }
+            } else if (pickerVisibleMedia.isEmpty()) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("No media found", color = Color.Gray)
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .pointerInput(pickerVisibleMedia) {
+                            var lastX = 0f
+                            var lastY = 0f
+                            var edgeDirection = 0
+                            var dragSelectedUris = latestPickerSelection
+                            var autoScrollJob: kotlinx.coroutines.Job? = null
+
+                            fun selectAt(x: Float, y: Float) {
+                                val hit = pickerGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                                    x >= info.offset.x && x < info.offset.x + info.size.width &&
+                                    y >= info.offset.y && y < info.offset.y + info.size.height
+                                }
+                                hit?.let { info ->
+                                    pickerVisibleMedia.getOrNull(info.index)?.let { media ->
+                                        dragSelectedUris = dragSelectedUris + media.uri
+                                        pickerSelectedUris = dragSelectedUris
+                                    }
+                                }
+                            }
+
+                            detectDragGestures(
+                                onDragStart = { start ->
+                                    dragSelectedUris = latestPickerSelection
+                                    lastX = start.x
+                                    lastY = start.y
+                                    selectAt(start.x, start.y)
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val pos = change.position
+                                    val dx = pos.x - lastX
+                                    val dy = pos.y - lastY
+                                    val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                                    val steps = kotlin.math.ceil(distance / 12f).toInt().coerceAtLeast(1)
+                                    for (step in 1..steps) {
+                                        val fraction = step.toFloat() / steps
+                                        selectAt(lastX + dx * fraction, lastY + dy * fraction)
+                                    }
+                                    lastX = pos.x
+                                    lastY = pos.y
+                                    val edge = 100.dp.toPx()
+                                    edgeDirection = when {
+                                        pos.y <= edge -> -1
+                                        pos.y >= size.height - edge -> 1
+                                        else -> 0
+                                    }
+                                    if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
+                                        autoScrollJob = pickerScope.launch {
+                                            while (edgeDirection != 0) {
+                                                pickerGridState.scrollBy(edgeDirection * 10f)
+                                                selectAt(lastX, lastY)
+                                                kotlinx.coroutines.delay(16L)
+                                            }
+                                        }
+                                    } else if (edgeDirection == 0) {
+                                        autoScrollJob?.cancel()
+                                        autoScrollJob = null
+                                    }
+                                },
+                                onDragEnd = {
+                                    edgeDirection = 0
+                                    autoScrollJob?.cancel()
+                                    autoScrollJob = null
+                                },
+                                onDragCancel = {
+                                    edgeDirection = 0
+                                    autoScrollJob?.cancel()
+                                    autoScrollJob = null
+                                }
+                            )
+                        }
+                ) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        state = pickerGridState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        items(pickerVisibleMedia, key = { it.uri.toString() }) { media ->
+                            MediaThumbnail(
+                                media = media,
+                                selected = media.uri in pickerSelectedUris,
+                                onClick = {
+                                    pickerSelectedUris = if (media.uri in pickerSelectedUris) {
+                                        pickerSelectedUris - media.uri
+                                    } else pickerSelectedUris + media.uri
+                                },
+                                onLongClick = { pickerSelectedUris = pickerSelectedUris + media.uri }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        showPrivacyPicker = false
+                        pickerSelectedUris = emptySet()
+                        onPickerEnd()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Cancel") }
+                Button(
+                    onClick = {
+                        val selected = pickerMedia.filter { it.uri in pickerSelectedUris }
+                        pickedPhotos = selected.filter { !it.isVideo }.map { it.uri }
+                        pickedVideos = selected.filter { it.isVideo }.map { it.uri }
+                        showPrivacyPicker = false
+                        pickerSelectedUris = emptySet()
+                        onPickerEnd()
+                    },
+                    enabled = pickerSelectedUris.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6550A4))
+                ) { Text("Add Selected (${pickerSelectedUris.size})") }
+            }
+        }
+        return
     }
 
     val openFile = previewFiles.getOrNull(previewIndex)
@@ -2022,8 +2251,11 @@ private fun PrivacyFolderScreen(
 
         Button(
             onClick = {
+                pickerSelectedUris = emptySet()
+                pickerTab = "Photos"
+                pickerAlbumId = null
+                showPrivacyPicker = true
                 onPickerStart()
-                mediaPicker.launch(arrayOf("image/*", "video/*"))
             },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Add Photos & Videos (${pickedPhotos.size + pickedVideos.size})") }
