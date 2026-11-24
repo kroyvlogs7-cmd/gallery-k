@@ -2041,22 +2041,36 @@ private fun PrivacyFolderScreen(
                             var edgeDirection = 0
                             var trackingPickerSelection = false
                             var dragSelectedUris = latestPickerSelection
+                            var lastSelectedRow = -1
                             var autoScrollJob: kotlinx.coroutines.Job? = null
 
+                            // Match the main Gallery behavior: dragging across a row
+                            // selects all three items in that row, including rows passed
+                            // while the grid is auto-scrolling.
                             fun selectAt(x: Float, y: Float) {
                                 val hit = pickerGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
                                     x >= info.offset.x && x < info.offset.x + info.size.width &&
                                     y >= info.offset.y && y < info.offset.y + info.size.height
+                                } ?: return
+                                val targetRow = hit.index / 3
+                                val rows = if (lastSelectedRow < 0) {
+                                    listOf(targetRow)
+                                } else if (lastSelectedRow <= targetRow) {
+                                    (lastSelectedRow..targetRow).toList()
+                                } else {
+                                    (lastSelectedRow downTo targetRow).toList()
                                 }
-                                hit?.let { info ->
-                                    pickerVisibleMedia.getOrNull(info.index)?.let { media ->
-                                        val updated = dragSelectedUris + media.uri
-                                        if (updated != dragSelectedUris) {
-                                            dragSelectedUris = updated
-                                            pickerSelectedUris = updated
-                                        }
-                                    }
+                                val rowUris = rows.flatMap { row ->
+                                    val start = row * 3
+                                    (start until (start + 3).coerceAtMost(pickerVisibleMedia.size))
+                                        .mapNotNull { pickerVisibleMedia.getOrNull(it)?.uri }
+                                }.toSet()
+                                val updated = dragSelectedUris + rowUris
+                                if (updated != dragSelectedUris) {
+                                    dragSelectedUris = updated
+                                    pickerSelectedUris = updated
                                 }
+                                lastSelectedRow = targetRow
                             }
 
                             detectDragGestures(
@@ -2067,6 +2081,7 @@ private fun PrivacyFolderScreen(
                                         lastX = start.x
                                         lastY = start.y
                                         edgeDirection = 0
+                                        lastSelectedRow = -1
                                         selectAt(start.x, start.y)
                                     }
                                 },
@@ -2480,21 +2495,34 @@ private fun PrivacyFolderScreen(
                         var trackingPrivateSelection = false
                         var privateAutoScrollJob: kotlinx.coroutines.Job? = null
                         var dragSelectedPaths = latestPrivateSelected
+                        var lastPrivateRow = -1
 
+                        // Match the main Gallery drag-selection behavior by selecting
+                        // the full three-item row and every row crossed during auto-scroll.
                         fun selectPrivateAt(x: Float, y: Float) {
                             val hit = privateGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
                                 x >= info.offset.x && x < info.offset.x + info.size.width &&
                                 y >= info.offset.y && y < info.offset.y + info.size.height
+                            } ?: return
+                            val targetRow = hit.index / 3
+                            val rows = if (lastPrivateRow < 0) {
+                                listOf(targetRow)
+                            } else if (lastPrivateRow <= targetRow) {
+                                (lastPrivateRow..targetRow).toList()
+                            } else {
+                                (lastPrivateRow downTo targetRow).toList()
                             }
-                            hit?.let { info ->
-                                filteredFiles.getOrNull(info.index)?.let { item ->
-                                    val updated = dragSelectedPaths + item.absolutePath
-                                    if (updated != dragSelectedPaths) {
-                                        dragSelectedPaths = updated
-                                        selectedPrivateFiles = updated
-                                    }
-                                }
+                            val rowPaths = rows.flatMap { row ->
+                                val start = row * 3
+                                (start until (start + 3).coerceAtMost(filteredFiles.size))
+                                    .mapNotNull { filteredFiles.getOrNull(it)?.absolutePath }
+                            }.toSet()
+                            val updated = dragSelectedPaths + rowPaths
+                            if (updated != dragSelectedPaths) {
+                                dragSelectedPaths = updated
+                                selectedPrivateFiles = updated
                             }
+                            lastPrivateRow = targetRow
                         }
 
                         detectDragGestures(
@@ -2507,6 +2535,7 @@ private fun PrivacyFolderScreen(
                                     lastX = start.x
                                     lastY = start.y
                                     privateEdgeDirection = 0
+                                    lastPrivateRow = -1
                                     selectPrivateAt(start.x, start.y)
                                 }
                             },
