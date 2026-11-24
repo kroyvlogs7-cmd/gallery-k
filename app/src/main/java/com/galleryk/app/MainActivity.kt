@@ -1819,7 +1819,9 @@ private fun PrivacyFolderScreen(
     var savedPhotoCount by remember { mutableIntStateOf(0) }
     var savedVideoCount by remember { mutableIntStateOf(0) }
     var savedFiles by remember { mutableStateOf(listOf<File>()) }
-    var previewFile by remember { mutableStateOf<File?>(null) }
+    var previewFiles by remember { mutableStateOf(listOf<File>()) }
+    var previewIndex by remember { mutableIntStateOf(0) }
+    var showDeletePrivateConfirm by remember { mutableStateOf(false) }
     var mediaFilter by remember { mutableStateOf("All") }
     var selectedPrivateFiles by remember { mutableStateOf(setOf<String>()) }
     var privacyMenuExpanded by remember { mutableStateOf(false) }
@@ -1915,17 +1917,48 @@ private fun PrivacyFolderScreen(
         }
     }
 
-    val openFile = previewFile
+    val openFile = previewFiles.getOrNull(previewIndex)
     if (openFile != null) {
         val uri = Uri.fromFile(openFile)
         if (openFile.parentFile == privateVideosDir) {
-            VideoPlayer(uri = uri, onBack = { previewFile = null })
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .pointerInput(previewIndex, previewFiles.size) {
+                        var dragTotal = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragTotal = 0f },
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
+                                dragTotal += dragAmount
+                            },
+                            onDragEnd = {
+                                val threshold = 36.dp.toPx()
+                                if (dragTotal < -threshold && previewIndex < previewFiles.lastIndex) {
+                                    previewIndex++
+                                } else if (dragTotal > threshold && previewIndex > 0) {
+                                    previewIndex--
+                                }
+                            },
+                            onDragCancel = { dragTotal = 0f }
+                        )
+                    }
+            ) {
+                VideoPlayer(uri = uri, onBack = { previewFiles = emptyList(); previewIndex = 0 }, enableSeekGestures = false)
+                Text(
+                    "Video ${previewIndex + 1} / ${previewFiles.size}",
+                    color = Color.White,
+                    modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp)
+                )
+            }
         } else {
             PhotoViewer(
                 uri = uri,
-                index = 0,
-                total = 1,
-                onBack = { previewFile = null }
+                index = previewIndex,
+                total = previewFiles.size,
+                onBack = { previewFiles = emptyList(); previewIndex = 0 },
+                onIndexChange = { previewIndex = it }
             )
         }
         return
@@ -2098,12 +2131,33 @@ private fun PrivacyFolderScreen(
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             Text("Unhide is supported on Android 10 and newer.", color = Color.Gray, fontSize = 13.sp)
         }
+        val filteredFiles = savedFiles.filter { file ->
+            when (mediaFilter) {
+                "Photos" -> file.parentFile == privatePhotosDir
+                "Videos" -> file.parentFile == privateVideosDir
+                else -> true
+            }
+        }
         if (selectedPrivateFiles.isNotEmpty()) {
+            val selectedPrivateMedia = savedFiles.filter { file ->
+                file.absolutePath in selectedPrivateFiles && when (mediaFilter) {
+                    "Photos" -> file.parentFile == privatePhotosDir
+                    "Videos" -> file.parentFile == privateVideosDir
+                    else -> true
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
-                    onClick = { selectedPrivateFiles = emptySet() },
+                    onClick = { previewFiles = selectedPrivateMedia; previewIndex = 0 },
                     modifier = Modifier.weight(1f)
-                ) { Text("Cancel Selection") }
+                ) { Text("Preview (${selectedPrivateMedia.size})") }
+                Button(
+                    onClick = { showDeletePrivateConfirm = true },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9B3030))
+                ) { Text("Delete (${selectedPrivateMedia.size})") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 Button(
                     onClick = {
                         val selected = savedFiles.filter { it.absolutePath in selectedPrivateFiles }
@@ -2120,10 +2174,31 @@ private fun PrivacyFolderScreen(
                     enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q,
                     modifier = Modifier.weight(1f)
                 ) { Text("Unhide (${selectedPrivateFiles.size})") }
+                OutlinedButton(
+                    onClick = { selectedPrivateFiles = emptySet() },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Cancel") }
             }
         }
 
-        Text("Saved Media", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Saved Media", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            TextButton(
+                onClick = {
+                    val visiblePaths = filteredFiles.map { it.absolutePath }.toSet()
+                    selectedPrivateFiles = if (visiblePaths.isNotEmpty() && visiblePaths.all { it in selectedPrivateFiles }) {
+                        selectedPrivateFiles - visiblePaths
+                    } else {
+                        selectedPrivateFiles + visiblePaths
+                    }
+                }
+            ) {
+                Text(
+                    if (filteredFiles.isNotEmpty() && filteredFiles.all { it.absolutePath in selectedPrivateFiles }) "Deselect All" else "Select All",
+                    color = Color.White
+                )
+            }
+        }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("All", "Photos", "Videos").forEach { filter ->
                 Button(
@@ -2133,13 +2208,6 @@ private fun PrivacyFolderScreen(
                         containerColor = if (mediaFilter == filter) Color(0xFF6550A4) else Color(0xFF29262D)
                     )
                 ) { Text(filter) }
-            }
-        }
-        val filteredFiles = savedFiles.filter { file ->
-            when (mediaFilter) {
-                "Photos" -> file.parentFile == privatePhotosDir
-                "Videos" -> file.parentFile == privateVideosDir
-                else -> true
             }
         }
         if (filteredFiles.isEmpty()) {
@@ -2264,7 +2332,10 @@ private fun PrivacyFolderScreen(
                                         selectedPrivateFiles = if (file.absolutePath in selectedPrivateFiles) {
                                             selectedPrivateFiles - file.absolutePath
                                         } else selectedPrivateFiles + file.absolutePath
-                                    } else previewFile = file
+                                    } else {
+                                        previewFiles = filteredFiles
+                                        previewIndex = filteredFiles.indexOf(file).coerceAtLeast(0)
+                                    }
                                 },
                                 onLongClick = {
                                     selectedPrivateFiles = selectedPrivateFiles + file.absolutePath
@@ -2311,6 +2382,27 @@ private fun PrivacyFolderScreen(
             }
             }
         }
+    }
+
+    if (showDeletePrivateConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeletePrivateConfirm = false },
+            title = { Text("Delete private files?") },
+            text = { Text("This will permanently delete the selected files from Privacy Folder.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val targets = savedFiles.filter { it.absolutePath in selectedPrivateFiles }
+                    val deleted = targets.count { it.delete() }
+                    selectedPrivateFiles = emptySet()
+                    showDeletePrivateConfirm = false
+                    refreshSavedFiles()
+                    Toast.makeText(context, "Deleted $deleted of ${targets.size} private files", Toast.LENGTH_LONG).show()
+                }) { Text("Delete", color = Color.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeletePrivateConfirm = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
