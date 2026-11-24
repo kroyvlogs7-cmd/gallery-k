@@ -242,7 +242,7 @@ var loading by remember { mutableStateOf(false) }
 var selectionMode by remember { mutableStateOf(false) }  
 var selectedUris by remember { mutableStateOf(setOf<Uri>()) }  
 var selectedPreviewMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
-var selectedPreviewIndex by remember { mutableIntStateOf(0) }
+var selectedPreviewIndex by remember { mutableIntStateOf(-1) }
 var refreshKey by remember { mutableIntStateOf(0) }  
 var privacyFolderScreen by remember { mutableStateOf(false) }
 var privacyPinUnlocked by remember { mutableStateOf(false) }
@@ -362,7 +362,7 @@ BackHandler(
 ) {  
     when {  
         privacyFolderScreen -> { privacyFolderScreen = false; privacyPinUnlocked = false; privacyPinChanging = false }
-        selectedPreviewMedia.isNotEmpty() -> { selectedPreviewMedia = emptyList(); selectedPreviewIndex = 0 }
+        selectedPreviewMedia.isNotEmpty() -> { selectedPreviewMedia = emptyList(); selectedPreviewIndex = -1 }
         selectionMode -> {  
             selectionMode = false  
             selectedUris = emptySet()  
@@ -400,12 +400,12 @@ MaterialTheme {
                 )
             }
         } 
-        else if (selectedPreviewMedia.isNotEmpty() && selectedPreviewIndex in selectedPreviewMedia.indices) {
+        else if (selectedPreviewMedia.isNotEmpty()) {
             SelectedMediaPreview(
                 mediaItems = selectedPreviewMedia,
                 index = selectedPreviewIndex,
                 onIndexChange = { selectedPreviewIndex = it },
-                onBack = { selectedPreviewMedia = emptyList(); selectedPreviewIndex = 0 }
+                onBack = { selectedPreviewMedia = emptyList(); selectedPreviewIndex = -1 }
             )
         }
         else if (  
@@ -509,7 +509,7 @@ MaterialTheme {
                             enabled = selectedUris.isNotEmpty(),
                             onClick = {
                                 selectedPreviewMedia = displayedMedia.filter { it.uri in selectedUris }
-                                selectedPreviewIndex = 0
+                                selectedPreviewIndex = -1
                             }
                         ) { Text("Preview") }
 
@@ -1072,60 +1072,85 @@ private fun SelectedMediaPreview(
     onIndexChange: (Int) -> Unit,
     onBack: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Preview (${mediaItems.size})",
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(onClick = onBack) {
-                Text("Close", color = Color.White)
-            }
-        }
+    val viewingItem = index in mediaItems.indices
+    BackHandler(enabled = viewingItem) {
+        onIndexChange(-1)
+    }
 
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
+    if (viewingItem) {
+        val current = mediaItems[index]
+        if (current.isVideo) {
+            VideoPlayer(
+                uri = current.uri,
+                onBack = { onIndexChange(-1) }
+            )
+        } else {
+            PhotoViewer(
+                uri = current.uri,
+                index = index,
+                total = mediaItems.size,
+                onBack = { onIndexChange(-1) },
+                onIndexChange = { nextIndex ->
+                    if (nextIndex in mediaItems.indices) onIndexChange(nextIndex)
+                }
+            )
+        }
+    } else {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentPadding = PaddingValues(3.dp)
+                .fillMaxSize()
+                .background(Color.Black)
         ) {
-            items(
-                items = mediaItems,
-                key = { it.uri.toString() }
-            ) { media ->
-                MediaThumbnail(
-                    media = media,
-                    selected = false,
-                    onClick = {},
-                    onLongClick = {}
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Preview (${mediaItems.size})",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
                 )
+                TextButton(onClick = onBack) {
+                    Text("Close", color = Color.White)
+                }
             }
-        }
 
-        Button(
-            onClick = onBack,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF315C91)
-            )
-        ) {
-            Text("Back", color = Color.White)
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(3.dp)
+            ) {
+                items(
+                    items = mediaItems,
+                    key = { it.uri.toString() }
+                ) { media ->
+                    MediaThumbnail(
+                        media = media,
+                        selected = false,
+                        onClick = { onIndexChange(mediaItems.indexOf(media)) },
+                        onLongClick = { onIndexChange(mediaItems.indexOf(media)) }
+                    )
+                }
+            }
+
+            Button(
+                onClick = onBack,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF315C91)
+                )
+            ) {
+                Text("Back", color = Color.White)
+            }
         }
     }
 }
