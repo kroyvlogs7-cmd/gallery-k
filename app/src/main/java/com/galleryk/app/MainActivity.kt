@@ -1072,71 +1072,63 @@ private fun SelectedMediaPreview(
     onIndexChange: (Int) -> Unit,
     onBack: () -> Unit
 ) {
-    val current = mediaItems[index]
-    Box(
-        Modifier
+    Column(
+        modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .pointerInput(index, mediaItems.size, current.isVideo) {
-                if (current.isVideo) {
-                    var dragTotal = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { dragTotal = 0f },
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            dragTotal += dragAmount
-                        },
-                        onDragEnd = {
-                            val threshold = 60.dp.toPx()
-                            if (dragTotal < -threshold && index < mediaItems.lastIndex) {
-                                onIndexChange(index + 1)
-                            } else if (dragTotal > threshold && index > 0) {
-                                onIndexChange(index - 1)
-                            }
-                        },
-                        onDragCancel = { dragTotal = 0f }
-                    )
-                }
-            }
     ) {
-        if (current.isVideo) {
-            VideoPlayer(uri = current.uri, onBack = onBack, enableSeekGestures = false)
-        } else {
-            PhotoViewer(
-                uri = current.uri,
-                index = index,
-                total = mediaItems.size,
-                onBack = onBack,
-                showHeader = false,
-                onIndexChange = onIndexChange
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Preview (${mediaItems.size})",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
             )
+            TextButton(onClick = onBack) {
+                Text("Close", color = Color.White)
+            }
         }
 
-        Text(
-            text = "${if (current.isVideo) "Video" else "Photo"} ${index + 1} / ${mediaItems.size}",
-            color = Color.White,
-            fontSize = 17.sp,
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .background(Color(0x66000000), RoundedCornerShape(8.dp))
-                .padding(horizontal = 10.dp, vertical = 6.dp)
-        )
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(3.dp)
+        ) {
+            items(
+                items = mediaItems,
+                key = { it.uri.toString() }
+            ) { media ->
+                MediaThumbnail(
+                    media = media,
+                    selected = false,
+                    onClick = {},
+                    onLongClick = {}
+                )
+            }
+        }
 
         Button(
             onClick = onBack,
             modifier = Modifier
-                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF315C91))
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF315C91)
+            )
         ) {
             Text("Back", color = Color.White)
         }
     }
 }
-
 
 @Composable
 private fun PhotoViewer(
