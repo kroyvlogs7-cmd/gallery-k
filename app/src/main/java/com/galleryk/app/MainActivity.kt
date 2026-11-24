@@ -1909,17 +1909,15 @@ private fun PrivacyFolderScreen(
 
     LaunchedEffect(Unit) { refreshSavedFiles() }
 
-    val photoPicker = rememberLauncherForActivityResult(
+    val mediaPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        pickedPhotos = uris
-        onPickerEnd()
-    }
-
-    val videoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        pickedVideos = uris
+        pickedPhotos = uris.filter { uri ->
+            context.contentResolver.getType(uri)?.startsWith("image/") == true
+        }
+        pickedVideos = uris.filter { uri ->
+            context.contentResolver.getType(uri)?.startsWith("video/") == true
+        }
         onPickerEnd()
     }
 
@@ -1985,8 +1983,8 @@ private fun PrivacyFolderScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF101114))
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(
             text = "‹  Back",
@@ -2025,18 +2023,10 @@ private fun PrivacyFolderScreen(
         Button(
             onClick = {
                 onPickerStart()
-                photoPicker.launch(arrayOf("image/*"))
+                mediaPicker.launch(arrayOf("image/*", "video/*"))
             },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Add Photos (${pickedPhotos.size})") }
-
-        Button(
-            onClick = {
-                onPickerStart()
-                videoPicker.launch(arrayOf("video/*"))
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Add Videos (${pickedVideos.size})") }
+        ) { Text("Add Photos & Videos (${pickedPhotos.size + pickedVideos.size})") }
 
         Text(
             text = "Selected: ${pickedPhotos.size} photos • ${pickedVideos.size} videos",
