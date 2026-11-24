@@ -249,6 +249,8 @@ var privacyFolderScreen by remember { mutableStateOf(false) }
 var privacyPinUnlocked by remember { mutableStateOf(false) }
 var privacyPinChanging by remember { mutableStateOf(false) }
 var privacyPickerActive by remember { mutableStateOf(false) }
+var privacyGalleryPicker by remember { mutableStateOf(false) }
+var privacyPickedUris by remember { mutableStateOf<Set<Uri>>(emptySet()) }
 val pinPrefs = remember { context.getSharedPreferences("gallery_k_privacy_pin", android.content.Context.MODE_PRIVATE) }
 var storedPinHash by remember { mutableStateOf(pinPrefs.getString("pin_hash", null)) }
 var fingerprintEnabled by remember { mutableStateOf(pinPrefs.getBoolean("fingerprint_enabled", true)) }
@@ -356,12 +358,13 @@ fun requestDelete() {
 }  
 
 BackHandler(  
-    enabled = privacyFolderScreen || selectedPreviewMedia.isNotEmpty() || selectionMode ||  
+    enabled = privacyGalleryPicker || privacyFolderScreen || selectedPreviewMedia.isNotEmpty() || selectionMode ||  
         selectedIndex >= 0 ||  
         selectedAlbumId != null ||  
         selectedTab != "Photos"  
 ) {  
-    when {  
+    when {
+        privacyGalleryPicker -> privacyGalleryPicker = false
         privacyFolderScreen -> { privacyFolderScreen = false; privacyPinUnlocked = false; privacyPinChanging = false }
         selectedPreviewMedia.isNotEmpty() -> { selectedPreviewMedia = emptyList(); selectedPreviewIndex = 0 }
         selectionMode -> {  
