@@ -28,7 +28,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -249,8 +248,6 @@ var privacyFolderScreen by remember { mutableStateOf(false) }
 var privacyPinUnlocked by remember { mutableStateOf(false) }
 var privacyPinChanging by remember { mutableStateOf(false) }
 var privacyPickerActive by remember { mutableStateOf(false) }
-var privacyGalleryPicker by remember { mutableStateOf(false) }
-var privacyPickedUris by remember { mutableStateOf<Set<Uri>>(emptySet()) }
 val pinPrefs = remember { context.getSharedPreferences("gallery_k_privacy_pin", android.content.Context.MODE_PRIVATE) }
 var storedPinHash by remember { mutableStateOf(pinPrefs.getString("pin_hash", null)) }
 var fingerprintEnabled by remember { mutableStateOf(pinPrefs.getBoolean("fingerprint_enabled", true)) }
@@ -358,13 +355,12 @@ fun requestDelete() {
 }  
 
 BackHandler(  
-    enabled = privacyGalleryPicker || privacyFolderScreen || selectedPreviewMedia.isNotEmpty() || selectionMode ||  
+    enabled = privacyFolderScreen || selectedPreviewMedia.isNotEmpty() || selectionMode ||  
         selectedIndex >= 0 ||  
         selectedAlbumId != null ||  
         selectedTab != "Photos"  
 ) {  
-    when {
-        privacyGalleryPicker -> privacyGalleryPicker = false
+    when {  
         privacyFolderScreen -> { privacyFolderScreen = false; privacyPinUnlocked = false; privacyPinChanging = false }
         selectedPreviewMedia.isNotEmpty() -> { selectedPreviewMedia = emptyList(); selectedPreviewIndex = 0 }
         selectionMode -> {  
@@ -392,25 +388,13 @@ MaterialTheme {
                     onPinSaved = { hash -> pinPrefs.edit().putString("pin_hash", hash).apply(); storedPinHash = hash; privacyPinUnlocked = true; privacyPinChanging = false },
                     fingerprintEnabled = fingerprintEnabled
                 )
-            } else if (privacyGalleryPicker) {
-                PrivacyGalleryPicker(
-                    allMedia = allMedia,
-                    albums = albums,
-                    initialSelection = privacyPickedUris,
-                    onCancel = { privacyGalleryPicker = false },
-                    onDone = { selected ->
-                        privacyPickedUris = selected
-                        privacyGalleryPicker = false
-                    }
-                )
             } else {
                 PrivacyFolderScreen(
                     onBack = { privacyFolderScreen = false; privacyPinUnlocked = false; privacyPickerActive = false },
                     onOriginalsDeleted = { refreshKey++ },
                     onChangePin = { privacyPinChanging = true; privacyPinUnlocked = false },
-                    pickedMedia = allMedia.filter { it.uri in privacyPickedUris },
-                    onOpenGalleryPicker = { privacyGalleryPicker = true },
-                    onClearPickedMedia = { privacyPickedUris = emptySet() },
+                    onPickerStart = { privacyPickerActive = true },
+                    onPickerEnd = { privacyPickerActive = false },
                     fingerprintEnabled = fingerprintEnabled,
                     onFingerprintEnabledChange = { enabled -> fingerprintEnabled = enabled; pinPrefs.edit().putBoolean("fingerprint_enabled", enabled).apply() }
                 )
@@ -440,7 +424,8 @@ MaterialTheme {
                     uri = current.uri,  
                     index = selectedIndex,  
                     total = displayedMedia.size,  
-                    onBack = { selectedIndex = -1 }  
+                    onBack = { selectedIndex = -1 },
+                    onIndexChange = { selectedIndex = it }
                 )  
             }  
         } else {  
@@ -685,7 +670,6 @@ MaterialTheme {
                                 // Do not key this pointerInput with selectionMode: turning
                                 // selection on after a long-press must not cancel the same touch.
                                 .pointerInput(displayedMedia) {
-                                var lastX = 0f
                                 var lastY = 0f
                                 var accumulatedDy = 0f
                                 var scrollDirection = 0
@@ -695,56 +679,66 @@ MaterialTheme {
                                 var autoScrollJob: kotlinx.coroutines.Job? = null
                                 var dragSelectedUris = selectedUris
 
-                                fun applyItemAt(x: Float, y: Float, add: Boolean) {
-                                    val hit = selectionGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                                        x >= info.offset.x && x < info.offset.x + info.size.width &&
-                                        y >= info.offset.y && y < info.offset.y + info.size.height
+                                fun applyRowAt(y: Float, add: Boolean) {
+                                    val visible = selectionGridState.layoutInfo.visibleItemsInfo
+                                        .filter { info -> !selectionModeState.value || info.index % 21 != 0 }
+                                    if (visible.isEmpty()) return
+                                    val hit = visible.minByOrNull { info ->
+                                        kotlin.math.abs((info.offset.y + info.size.height / 2f) - y)
                                     } ?: return
-                                    if (selectionModeState.value && hit.index % 21 == 0) return
+                                    // In selection mode, one full-width Select All item is
+                                    // inserted before every group of 20 media items.
                                     val mediaIndex = if (selectionModeState.value) {
                                         hit.index - (hit.index / 21 + 1)
                                     } else hit.index
-                                    val media = displayedMedia.getOrNull(mediaIndex) ?: return
-                                    val updated = if (add) dragSelectedUris + media.uri else dragSelectedUris - media.uri
+                                    val safeMediaIndex = mediaIndex.coerceIn(0, displayedMedia.lastIndex)
+                                    val groupNumber = if (selectionModeState.value) safeMediaIndex / 20 else 0
+                                    val indexInGroup = if (selectionModeState.value) safeMediaIndex % 20 else safeMediaIndex
+                                    val targetRowNumber = if (selectionModeState.value) {
+                                        groupNumber * 7 + indexInGroup / 3
+                                    } else safeMediaIndex / 3
+                                    val from = if (lastRowStartIndex < 0) targetRowNumber else lastRowStartIndex
+                                    val rowNumbers = if (from <= targetRowNumber) {
+                                        (from..targetRowNumber).toList()
+                                    } else {
+                                        (from downTo targetRowNumber).toList()
+                                    }
+                                    val rowUris = rowNumbers.flatMap { rowNumber ->
+                                        val rowGroup = if (selectionModeState.value) rowNumber / 7 else 0
+                                        val rowInGroup = if (selectionModeState.value) rowNumber % 7 else rowNumber
+                                        val rowStart = if (selectionModeState.value) {
+                                            rowGroup * 20 + rowInGroup * 3
+                                        } else rowInGroup * 3
+                                        val rowEnd = if (selectionModeState.value) {
+                                            (rowStart + 3).coerceAtMost((rowGroup + 1) * 20)
+                                        } else (rowStart + 3).coerceAtMost(displayedMedia.size)
+                                        (rowStart until rowEnd)
+                                            .mapNotNull { index -> displayedMedia.getOrNull(index)?.uri }
+                                    }.toSet()
+                                    val updated = if (add) dragSelectedUris + rowUris else dragSelectedUris - rowUris
                                     if (updated != dragSelectedUris) {
                                         dragSelectedUris = updated
                                         selectedUris = updated
                                     }
-                                }
-
-                                fun applyDragPath(fromX: Float, fromY: Float, toX: Float, toY: Float) {
-                                    val dx = toX - fromX
-                                    val dy = toY - fromY
-                                    val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                    val steps = kotlin.math.ceil(distance / 10f).toInt().coerceAtLeast(1)
-                                    for (step in 1..steps) {
-                                        val fraction = step.toFloat() / steps
-                                        applyItemAt(
-                                            fromX + dx * fraction,
-                                            fromY + dy * fraction,
-                                            add = dragDirection > 0
-                                        )
-                                    }
+                                    lastRowStartIndex = targetRowNumber
                                 }
 
                                 detectDragGestures(
                                     onDragStart = { start ->
                                         trackingSelectionDrag = selectionModeState.value
                                         if (trackingSelectionDrag) {
-                                            lastX = start.x
                                             lastY = start.y
                                             accumulatedDy = 0f
                                             scrollDirection = 0
                                             dragDirection = 1
                                             lastRowStartIndex = -1
                                             dragSelectedUris = selectedUris
-                                            applyItemAt(start.x, start.y, add = true)
+                                            applyRowAt(start.y, add = true)
                                         }
                                     },
                                     onDrag = { change, _ ->
                                         if (trackingSelectionDrag && selectionModeState.value) {
                                             change.consume()
-                                            val x = change.position.x
                                             val y = change.position.y
                                             accumulatedDy += y - lastY
                                             if (accumulatedDy >= 10f) {
@@ -754,8 +748,7 @@ MaterialTheme {
                                                 dragDirection = -1
                                                 accumulatedDy = 0f
                                             }
-                                            applyDragPath(lastX, lastY, x, y)
-                                            lastX = x
+                                            applyRowAt(y, add = dragDirection > 0)
                                             lastY = y
 
                                             // Up-scroll can begin from the middle; down-scroll
@@ -775,7 +768,7 @@ MaterialTheme {
                                                         val speed = (7f + (distance / maxDistance.coerceAtLeast(1f)) * 13f)
                                                             .coerceIn(7f, 20f)
                                                         selectionGridState.scrollBy(direction * speed)
-                                                        applyItemAt(lastX, lastY, add = dragDirection > 0)
+                                                        applyRowAt(lastY, add = dragDirection > 0)
                                                         kotlinx.coroutines.delay(16L)
                                                     }
                                                 }
@@ -1079,42 +1072,67 @@ private fun SelectedMediaPreview(
     onIndexChange: (Int) -> Unit,
     onBack: () -> Unit
 ) {
-    Column(
+    val current = mediaItems[index]
+    Box(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF101114))
+            .background(Color.Black)
+            .pointerInput(index, mediaItems.size, current.isVideo) {
+                if (current.isVideo) {
+                    var dragTotal = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragTotal = 0f },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            dragTotal += dragAmount
+                        },
+                        onDragEnd = {
+                            val threshold = 60.dp.toPx()
+                            if (dragTotal < -threshold && index < mediaItems.lastIndex) {
+                                onIndexChange(index + 1)
+                            } else if (dragTotal > threshold && index > 0) {
+                                onIndexChange(index - 1)
+                            }
+                        },
+                        onDragCancel = { dragTotal = 0f }
+                    )
+                }
+            }
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TextButton(onClick = onBack) { Text("Back", color = Color.White) }
-            Text(
-                "${mediaItems.size} Selected",
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 8.dp)
+        if (current.isVideo) {
+            VideoPlayer(uri = current.uri, onBack = onBack, enableSeekGestures = false)
+        } else {
+            PhotoViewer(
+                uri = current.uri,
+                index = index,
+                total = mediaItems.size,
+                onBack = onBack,
+                showHeader = false,
+                onIndexChange = onIndexChange
             )
         }
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+
+        Text(
+            text = "${if (current.isVideo) "Video" else "Photo"} ${index + 1} / ${mediaItems.size}",
+            color = Color.White,
+            fontSize = 17.sp,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .background(Color(0x66000000), RoundedCornerShape(8.dp))
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        )
+
+        Button(
+            onClick = onBack,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF315C91))
         ) {
-            items(mediaItems, key = { it.uri.toString() }) { media ->
-                MediaThumbnail(
-                    media = media,
-                    selected = true,
-                    onClick = { },
-                    onLongClick = { }
-                )
-            }
+            Text("Back", color = Color.White)
         }
     }
 }
@@ -1126,37 +1144,50 @@ private fun PhotoViewer(
     index: Int,
     total: Int,
     onBack: () -> Unit,
-    showHeader: Boolean = true
+    showHeader: Boolean = true,
+    onIndexChange: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
-
-    var bitmap by remember(uri) {
-        mutableStateOf<Bitmap?>(null)
-    }
+    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var zoom by remember(uri) { mutableFloatStateOf(1f) }
+    var offsetX by remember(uri) { mutableFloatStateOf(0f) }
+    var offsetY by remember(uri) { mutableFloatStateOf(0f) }
 
     LaunchedEffect(uri) {
-        bitmap = withContext(Dispatchers.IO) {
+        val decoded = withContext(Dispatchers.IO) {
             try {
-                context.contentResolver
-                    .openInputStream(uri)?.use {
-                        android.graphics.BitmapFactory.decodeStream(it)
-                    }
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    android.graphics.BitmapFactory.decodeStream(stream)
+                }
             } catch (_: Exception) {
                 null
             }
         }
+        if (decoded != null) bitmap = decoded
     }
 
-    Box(
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        if (bitmap != null) {
+        val density = LocalDensity.current
+        val viewWidthPx = with(density) { maxWidth.toPx() }
+        val viewHeightPx = with(density) { maxHeight.toPx() }
+        val currentBitmap = bitmap
+
+        if (currentBitmap != null) {
             Image(
-                bitmap = bitmap!!.asImageBitmap(),
+                bitmap = currentBitmap.asImageBitmap(),
                 contentDescription = "Full photo",
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = zoom
+                        scaleY = zoom
+                        translationX = offsetX
+                        translationY = offsetY
+                    },
                 contentScale = ContentScale.Fit
             )
         } else {
@@ -1165,6 +1196,93 @@ private fun PhotoViewer(
                 modifier = Modifier.align(Alignment.Center)
             )
         }
+
+        // Gestures are handled by the full-screen container, not the transformed Image.
+        // This keeps touch coordinates stable while the image itself is zoomed and moved.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(uri, viewWidthPx, viewHeightPx, index, total, currentBitmap) {
+                    var swipeDistance = 0f
+                    var swipeHandled = false
+                    var lastPanTime = 0L
+
+                    detectTransformGestures { _, pan, zoomChange, _ ->
+                        val bitmapNow = currentBitmap ?: return@detectTransformGestures
+                        val oldZoom = zoom
+                        val newZoom = (oldZoom * zoomChange).coerceIn(1f, 6f)
+
+                        if (oldZoom > 1.01f || newZoom > 1.01f) {
+                            val fitScale = minOf(
+                                viewWidthPx / bitmapNow.width.toFloat(),
+                                viewHeightPx / bitmapNow.height.toFloat()
+                            )
+                            val fittedWidth = bitmapNow.width * fitScale
+                            val fittedHeight = bitmapNow.height * fitScale
+                            val maxX = ((fittedWidth * newZoom - viewWidthPx) / 2f)
+                                .coerceAtLeast(0f)
+                            val maxY = ((fittedHeight * newZoom - viewHeightPx) / 2f)
+                                .coerceAtLeast(0f)
+
+                            zoom = newZoom
+                            offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
+                            offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
+                            swipeDistance = 0f
+                            swipeHandled = false
+                            lastPanTime = 0L
+                        } else {
+                            zoom = 1f
+                            offsetX = 0f
+                            offsetY = 0f
+
+                            if (!swipeHandled) {
+                                swipeDistance += pan.x
+
+                                // Fast flicks should advance with a short movement;
+                                // deliberate slow swipes still use a comfortable distance.
+                                val now = android.os.SystemClock.uptimeMillis()
+                                val elapsed = if (lastPanTime == 0L) 16L
+                                    else (now - lastPanTime).coerceAtLeast(1L)
+                                lastPanTime = now
+                                val velocityX = pan.x * 1000f / elapsed
+                                val fastFlickDistance = 12.dp.toPx()
+                                val normalSwipeDistance = 28.dp.toPx()
+                                val isFastLeft = velocityX < -950f &&
+                                    swipeDistance <= -fastFlickDistance
+                                val isFastRight = velocityX > 950f &&
+                                    swipeDistance >= fastFlickDistance
+
+                                if ((isFastLeft || swipeDistance <= -normalSwipeDistance) &&
+                                    index < total - 1
+                                ) {
+                                    swipeHandled = true
+                                    onIndexChange(index + 1)
+                                } else if ((isFastRight || swipeDistance >= normalSwipeDistance) &&
+                                    index > 0
+                                ) {
+                                    swipeHandled = true
+                                    onIndexChange(index - 1)
+                                }
+                            }
+                        }
+                    }
+                }
+                .pointerInput(uri) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            if (zoom > 1f) {
+                                zoom = 1f
+                                offsetX = 0f
+                                offsetY = 0f
+                            } else {
+                                zoom = 2.5f
+                                offsetX = 0f
+                                offsetY = 0f
+                            }
+                        }
+                    )
+                }
+        )
 
         if (showHeader) {
             Row(
@@ -1181,9 +1299,7 @@ private fun PhotoViewer(
                     fontSize = 34.sp,
                     modifier = Modifier.clickable(onClick = onBack)
                 )
-
                 Spacer(Modifier.width(20.dp))
-
                 Text(
                     "Photo ${index + 1} / $total",
                     color = Color.White,
@@ -1193,7 +1309,6 @@ private fun PhotoViewer(
         }
     }
 }
-
 
 @Composable
 private fun VideoPlayer(
@@ -1685,224 +1800,28 @@ Box(
 }
 
 
-
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-@Composable
-private fun PrivacyGalleryPicker(
-    allMedia: List<GalleryMedia>,
-    albums: List<PhotoAlbum>,
-    initialSelection: Set<Uri>,
-    onCancel: () -> Unit,
-    onDone: (Set<Uri>) -> Unit
-) {
-    var selectedTab by remember { mutableStateOf("Photos") }
-    var selectedAlbumId by remember { mutableStateOf<String?>(null) }
-    var selectedUris by remember { mutableStateOf(initialSelection) }
-    val selectedUrisState by rememberUpdatedState(selectedUris)
-    val displayedMedia = when {
-        selectedTab == "Albums" && selectedAlbumId != null ->
-            albums.firstOrNull { it.id == selectedAlbumId }?.media.orEmpty()
-        selectedTab == "Videos" -> allMedia.filter { it.isVideo }
-        selectedTab == "Albums" -> emptyList()
-        else -> allMedia.filter { !it.isVideo }
-    }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Color(0xFF101114))
-            .statusBarsPadding()
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TextButton(onClick = {
-                if (selectedAlbumId != null) selectedAlbumId = null else onCancel()
-            }) {
-                Text(if (selectedAlbumId != null) "‹ Albums" else "Cancel", color = Color.White)
-            }
-            Column(Modifier.weight(1f).padding(start = 6.dp)) {
-                Text("Gallery K", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("${selectedUris.size} selected", color = Color.LightGray, fontSize = 12.sp)
-            }
-            Button(
-                onClick = { onDone(selectedUris) },
-                enabled = selectedUris.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF315C91))
-            ) { Text("Add") }
-        }
-
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            listOf("Photos", "Videos", "Albums").forEach { tab ->
-                val active = selectedTab == tab
-                Box(
-                    Modifier.weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (active) Color(0xFF315C91) else Color(0xFF24262C))
-                        .clickable {
-                            selectedTab = tab
-                            selectedAlbumId = null
-                        }
-                        .padding(vertical = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(tab, color = Color.White, fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        if (selectedTab == "Albums" && selectedAlbumId == null) {
-            Text("${albums.size} Albums", color = Color.LightGray, modifier = Modifier.padding(start = 16.dp, bottom = 8.dp))
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(8.dp)
-            ) {
-                items(albums, key = { it.id }) { album ->
-                    AlbumCard(album) { selectedAlbumId = album.id }
-                }
-            }
-        } else if (displayedMedia.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No media found", color = Color.White)
-            }
-        } else {
-            Text(
-                "${displayedMedia.size} ${if (selectedTab == "Videos") "Videos" else if (selectedAlbumId != null) "Items" else "Photos"}",
-                color = Color.LightGray,
-                modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
-            )
-            val gridState = rememberLazyGridState()
-            val scope = rememberCoroutineScope()
-            Box(
-                Modifier.fillMaxSize().pointerInput(displayedMedia) {
-                    var lastX = 0f
-                    var lastY = 0f
-                    var edgeDirection = 0
-                    var tracking = false
-                    var autoScrollJob: kotlinx.coroutines.Job? = null
-
-                    fun selectAt(x: Float, y: Float) {
-                        val hit = gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                            x >= info.offset.x && x < info.offset.x + info.size.width &&
-                            y >= info.offset.y && y < info.offset.y + info.size.height
-                        } ?: return
-                        displayedMedia.getOrNull(hit.index)?.let { media ->
-                            selectedUris = selectedUris + media.uri
-                        }
-                    }
-
-                    fun selectPath(x1: Float, y1: Float, x2: Float, y2: Float) {
-                        val dx = x2 - x1
-                        val dy = y2 - y1
-                        val steps = kotlin.math.ceil(kotlin.math.sqrt(dx * dx + dy * dy) / 10f).toInt().coerceAtLeast(1)
-                        for (step in 1..steps) {
-                            val f = step.toFloat() / steps
-                            selectAt(x1 + dx * f, y1 + dy * f)
-                        }
-                    }
-
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { start ->
-                            tracking = true
-                            lastX = start.x
-                            lastY = start.y
-                            selectAt(start.x, start.y)
-                        },
-                        onDrag = { change, _ ->
-                            if (tracking) {
-                                change.consume()
-                                val pos = change.position
-                                selectPath(lastX, lastY, pos.x, pos.y)
-                                lastX = pos.x
-                                lastY = pos.y
-                                val edge = 85.dp.toPx()
-                                edgeDirection = when {
-                                    pos.y < edge -> -1
-                                    pos.y > size.height - edge -> 1
-                                    else -> 0
-                                }
-                                if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
-                                    autoScrollJob = scope.launch {
-                                        while (edgeDirection != 0 && tracking) {
-                                            gridState.scrollBy(edgeDirection * 12f)
-                                            selectAt(lastX, lastY)
-                                            delay(16L)
-                                        }
-                                    }
-                                } else if (edgeDirection == 0) {
-                                    autoScrollJob?.cancel()
-                                    autoScrollJob = null
-                                }
-                            }
-                        },
-                        onDragEnd = {
-                            tracking = false
-                            edgeDirection = 0
-                            autoScrollJob?.cancel()
-                            autoScrollJob = null
-                        },
-                        onDragCancel = {
-                            tracking = false
-                            edgeDirection = 0
-                            autoScrollJob?.cancel()
-                            autoScrollJob = null
-                        }
-                    )
-                }
-            ) {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    state = gridState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    items(displayedMedia, key = { it.uri.toString() }) { media ->
-                        MediaThumbnail(
-                            media = media,
-                            selected = media.uri in selectedUris,
-                            onClick = {
-                                selectedUris = if (media.uri in selectedUris) selectedUris - media.uri else selectedUris + media.uri
-                            },
-                            onLongClick = { selectedUris = selectedUris + media.uri }
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun PrivacyFolderScreen(
     onBack: () -> Unit,
     onOriginalsDeleted: () -> Unit,
     onChangePin: () -> Unit,
-    pickedMedia: List<GalleryMedia>,
-    onOpenGalleryPicker: () -> Unit,
-    onClearPickedMedia: () -> Unit,
+    onPickerStart: () -> Unit,
+    onPickerEnd: () -> Unit,
     fingerprintEnabled: Boolean,
     onFingerprintEnabledChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val pickedPhotos = pickedMedia.filter { !it.isVideo }.map { it.uri }
-    val pickedVideos = pickedMedia.filter { it.isVideo }.map { it.uri }
+    var pickedPhotos by remember { mutableStateOf(listOf<Uri>()) }
+    var pickedVideos by remember { mutableStateOf(listOf<Uri>()) }
     var saving by remember { mutableStateOf(false) }
     var savedPhotoCount by remember { mutableIntStateOf(0) }
     var savedVideoCount by remember { mutableIntStateOf(0) }
     var savedFiles by remember { mutableStateOf(listOf<File>()) }
-    var previewFile by remember { mutableStateOf<File?>(null) }
+    var previewFiles by remember { mutableStateOf(listOf<File>()) }
+    var previewIndex by remember { mutableIntStateOf(0) }
+    var showDeletePrivateConfirm by remember { mutableStateOf(false) }
     var mediaFilter by remember { mutableStateOf("All") }
     var selectedPrivateFiles by remember { mutableStateOf(setOf<String>()) }
     var privacyMenuExpanded by remember { mutableStateOf(false) }
@@ -1973,6 +1892,20 @@ private fun PrivacyFolderScreen(
 
     LaunchedEffect(Unit) { refreshSavedFiles() }
 
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        pickedPhotos = uris
+        onPickerEnd()
+    }
+
+    val videoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        pickedVideos = uris
+        onPickerEnd()
+    }
+
     val deleteOriginalsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -1984,17 +1917,48 @@ private fun PrivacyFolderScreen(
         }
     }
 
-    val openFile = previewFile
+    val openFile = previewFiles.getOrNull(previewIndex)
     if (openFile != null) {
         val uri = Uri.fromFile(openFile)
         if (openFile.parentFile == privateVideosDir) {
-            VideoPlayer(uri = uri, onBack = { previewFile = null })
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .pointerInput(previewIndex, previewFiles.size) {
+                        var dragTotal = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragTotal = 0f },
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
+                                dragTotal += dragAmount
+                            },
+                            onDragEnd = {
+                                val threshold = 36.dp.toPx()
+                                if (dragTotal < -threshold && previewIndex < previewFiles.lastIndex) {
+                                    previewIndex++
+                                } else if (dragTotal > threshold && previewIndex > 0) {
+                                    previewIndex--
+                                }
+                            },
+                            onDragCancel = { dragTotal = 0f }
+                        )
+                    }
+            ) {
+                VideoPlayer(uri = uri, onBack = { previewFiles = emptyList(); previewIndex = 0 }, enableSeekGestures = false)
+                Text(
+                    "Video ${previewIndex + 1} / ${previewFiles.size}",
+                    color = Color.White,
+                    modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp)
+                )
+            }
         } else {
             PhotoViewer(
                 uri = uri,
-                index = 0,
-                total = 1,
-                onBack = { previewFile = null }
+                index = previewIndex,
+                total = previewFiles.size,
+                onBack = { previewFiles = emptyList(); previewIndex = 0 },
+                onIndexChange = { previewIndex = it }
             )
         }
         return
@@ -2042,9 +2006,20 @@ private fun PrivacyFolderScreen(
         OutlinedButton(onClick = onChangePin, modifier = Modifier.fillMaxWidth()) { Text("Change PIN") }
 
         Button(
-            onClick = onOpenGalleryPicker,
+            onClick = {
+                onPickerStart()
+                photoPicker.launch(arrayOf("image/*"))
+            },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Add Gallery (${pickedPhotos.size + pickedVideos.size} selected)") }
+        ) { Text("Add Photos (${pickedPhotos.size})") }
+
+        Button(
+            onClick = {
+                onPickerStart()
+                videoPicker.launch(arrayOf("video/*"))
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Add Videos (${pickedVideos.size})") }
 
         Text(
             text = "Selected: ${pickedPhotos.size} photos • ${pickedVideos.size} videos",
@@ -2095,7 +2070,8 @@ private fun PrivacyFolderScreen(
                         Pair(photoSaved to videoSaved, copiedUris.toList())
                     }
                     refreshSavedFiles()
-                    onClearPickedMedia()
+                    pickedPhotos = emptyList()
+                    pickedVideos = emptyList()
                     saving = false
                     Toast.makeText(
                         context,
@@ -2155,12 +2131,33 @@ private fun PrivacyFolderScreen(
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             Text("Unhide is supported on Android 10 and newer.", color = Color.Gray, fontSize = 13.sp)
         }
+        val filteredFiles = savedFiles.filter { file ->
+            when (mediaFilter) {
+                "Photos" -> file.parentFile == privatePhotosDir
+                "Videos" -> file.parentFile == privateVideosDir
+                else -> true
+            }
+        }
         if (selectedPrivateFiles.isNotEmpty()) {
+            val selectedPrivateMedia = savedFiles.filter { file ->
+                file.absolutePath in selectedPrivateFiles && when (mediaFilter) {
+                    "Photos" -> file.parentFile == privatePhotosDir
+                    "Videos" -> file.parentFile == privateVideosDir
+                    else -> true
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
-                    onClick = { selectedPrivateFiles = emptySet() },
+                    onClick = { previewFiles = selectedPrivateMedia; previewIndex = 0 },
                     modifier = Modifier.weight(1f)
-                ) { Text("Cancel Selection") }
+                ) { Text("Preview (${selectedPrivateMedia.size})") }
+                Button(
+                    onClick = { showDeletePrivateConfirm = true },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9B3030))
+                ) { Text("Delete (${selectedPrivateMedia.size})") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 Button(
                     onClick = {
                         val selected = savedFiles.filter { it.absolutePath in selectedPrivateFiles }
@@ -2177,10 +2174,31 @@ private fun PrivacyFolderScreen(
                     enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q,
                     modifier = Modifier.weight(1f)
                 ) { Text("Unhide (${selectedPrivateFiles.size})") }
+                OutlinedButton(
+                    onClick = { selectedPrivateFiles = emptySet() },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Cancel") }
             }
         }
 
-        Text("Saved Media", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Saved Media", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            TextButton(
+                onClick = {
+                    val visiblePaths = filteredFiles.map { it.absolutePath }.toSet()
+                    selectedPrivateFiles = if (visiblePaths.isNotEmpty() && visiblePaths.all { it in selectedPrivateFiles }) {
+                        selectedPrivateFiles - visiblePaths
+                    } else {
+                        selectedPrivateFiles + visiblePaths
+                    }
+                }
+            ) {
+                Text(
+                    if (filteredFiles.isNotEmpty() && filteredFiles.all { it.absolutePath in selectedPrivateFiles }) "Deselect All" else "Select All",
+                    color = Color.White
+                )
+            }
+        }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("All", "Photos", "Videos").forEach { filter ->
                 Button(
@@ -2190,13 +2208,6 @@ private fun PrivacyFolderScreen(
                         containerColor = if (mediaFilter == filter) Color(0xFF6550A4) else Color(0xFF29262D)
                     )
                 ) { Text(filter) }
-            }
-        }
-        val filteredFiles = savedFiles.filter { file ->
-            when (mediaFilter) {
-                "Photos" -> file.parentFile == privatePhotosDir
-                "Videos" -> file.parentFile == privateVideosDir
-                else -> true
             }
         }
         if (filteredFiles.isEmpty()) {
@@ -2211,11 +2222,11 @@ private fun PrivacyFolderScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .pointerInput(filteredFiles) {
+                    .pointerInput(filteredFiles, selectedPrivateFiles.isNotEmpty()) {
+                        if (selectedPrivateFiles.isNotEmpty()) {
                         var lastX = 0f
                         var lastY = 0f
                         var privateEdgeDirection = 0
-                        var trackingPrivateDrag = false
                         var privateAutoScrollJob: kotlinx.coroutines.Job? = null
                         fun selectPrivateAt(x: Float, y: Float) {
                             val hit = privateGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
@@ -2224,67 +2235,57 @@ private fun PrivacyFolderScreen(
                             }
                             hit?.let { info ->
                                 filteredFiles.getOrNull(info.index)?.let { item ->
-                                    selectedPrivateFiles = selectedPrivateFiles + item.absolutePath
+                                    selectedPrivateFiles = latestPrivateSelected + item.absolutePath
                                 }
                             }
                         }
-                        fun selectPrivatePath(fromX: Float, fromY: Float, toX: Float, toY: Float) {
-                            val dx = toX - fromX
-                            val dy = toY - fromY
-                            val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                            val steps = kotlin.math.ceil(distance / 10f).toInt().coerceAtLeast(1)
-                            for (step in 1..steps) {
-                                val fraction = step.toFloat() / steps
-                                selectPrivateAt(fromX + dx * fraction, fromY + dy * fraction)
-                            }
-                        }
-                        detectDragGesturesAfterLongPress(
+                        detectDragGestures(
                             onDragStart = { start ->
-                                trackingPrivateDrag = true
                                 lastX = start.x
                                 lastY = start.y
                                 selectPrivateAt(start.x, start.y)
                             },
                             onDrag = { change, _ ->
-                                if (trackingPrivateDrag) {
-                                    change.consume()
-                                    val pos = change.position
-                                    selectPrivatePath(lastX, lastY, pos.x, pos.y)
-                                    lastX = pos.x
-                                    lastY = pos.y
-                                    val edge = 90.dp.toPx()
-                                    privateEdgeDirection = when {
-                                        pos.y < edge -> -1
-                                        pos.y > size.height - edge -> 1
-                                        else -> 0
-                                    }
-                                    if (privateEdgeDirection != 0 && privateAutoScrollJob?.isActive != true) {
-                                        privateAutoScrollJob = privateSelectionScope.launch {
-                                            while (privateEdgeDirection != 0 && trackingPrivateDrag) {
-                                                privateGridState.scrollBy(privateEdgeDirection * 12f)
-                                                selectPrivateAt(lastX, lastY)
-                                                kotlinx.coroutines.delay(16L)
-                                            }
+                                change.consume()
+                                val pos = change.position
+                                val dx = pos.x - lastX
+                                val dy = pos.y - lastY
+                                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                                val steps = kotlin.math.ceil(distance / 12f).toInt().coerceAtLeast(1)
+                                for (step in 1..steps) {
+                                    val f = step.toFloat() / steps
+                                    selectPrivateAt(lastX + dx * f, lastY + dy * f)
+                                }
+                                lastX = pos.x
+                                lastY = pos.y
+                                val edge = 100.dp.toPx()
+                                privateEdgeDirection = when {
+                                    pos.y < edge -> -1
+                                    pos.y > size.height - edge -> 1
+                                    else -> 0
+                                }
+                                if (privateEdgeDirection != 0 && privateAutoScrollJob?.isActive != true) {
+                                    privateAutoScrollJob = privateSelectionScope.launch {
+                                        while (privateEdgeDirection != 0) {
+                                            privateGridState.scrollBy(privateEdgeDirection * 10f)
+                                            selectPrivateAt(lastX, lastY)
+                                            kotlinx.coroutines.delay(16L)
                                         }
-                                    } else if (privateEdgeDirection == 0) {
-                                        privateAutoScrollJob?.cancel()
-                                        privateAutoScrollJob = null
                                     }
                                 }
                             },
                             onDragEnd = {
-                                trackingPrivateDrag = false
                                 privateEdgeDirection = 0
                                 privateAutoScrollJob?.cancel()
                                 privateAutoScrollJob = null
                             },
                             onDragCancel = {
-                                trackingPrivateDrag = false
                                 privateEdgeDirection = 0
                                 privateAutoScrollJob?.cancel()
                                 privateAutoScrollJob = null
                             }
                         )
+                        }
                     }
             ) {
             LazyVerticalGrid(
@@ -2331,7 +2332,10 @@ private fun PrivacyFolderScreen(
                                         selectedPrivateFiles = if (file.absolutePath in selectedPrivateFiles) {
                                             selectedPrivateFiles - file.absolutePath
                                         } else selectedPrivateFiles + file.absolutePath
-                                    } else previewFile = file
+                                    } else {
+                                        previewFiles = filteredFiles
+                                        previewIndex = filteredFiles.indexOf(file).coerceAtLeast(0)
+                                    }
                                 },
                                 onLongClick = {
                                     selectedPrivateFiles = selectedPrivateFiles + file.absolutePath
@@ -2378,6 +2382,27 @@ private fun PrivacyFolderScreen(
             }
             }
         }
+    }
+
+    if (showDeletePrivateConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeletePrivateConfirm = false },
+            title = { Text("Delete private files?") },
+            text = { Text("This will permanently delete the selected files from Privacy Folder.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val targets = savedFiles.filter { it.absolutePath in selectedPrivateFiles }
+                    val deleted = targets.count { it.delete() }
+                    selectedPrivateFiles = emptySet()
+                    showDeletePrivateConfirm = false
+                    refreshSavedFiles()
+                    Toast.makeText(context, "Deleted $deleted of ${targets.size} private files", Toast.LENGTH_LONG).show()
+                }) { Text("Delete", color = Color.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeletePrivateConfirm = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
