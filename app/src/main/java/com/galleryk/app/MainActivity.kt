@@ -1149,20 +1149,29 @@ private fun PhotoViewer(
 ) {
     val context = LocalContext.current
 
-    var bitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
-    var zoom by remember(uri) { mutableFloatStateOf(1f) }
-    var offsetX by remember(uri) { mutableFloatStateOf(0f) }
-    var offsetY by remember(uri) { mutableFloatStateOf(0f) }
+    // Keep the previous frame visible while the next photo is decoding.
+    // This avoids a black/loading flash between adjacent photos.
+    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(uri) {
-        bitmap = withContext(Dispatchers.IO) {
+        zoom = 1f
+        offsetX = 0f
+        offsetY = 0f
+
+        val decoded = withContext(Dispatchers.IO) {
             try {
-                context.contentResolver.openInputStream(uri)?.use {
-                    android.graphics.BitmapFactory.decodeStream(it)
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    android.graphics.BitmapFactory.decodeStream(stream)
                 }
             } catch (_: Exception) {
                 null
             }
+        }
+        if (decoded != null) {
+            bitmap = decoded
         }
     }
 
@@ -1171,12 +1180,14 @@ private fun PhotoViewer(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        val viewWidthPx = with(LocalDensity.current) { maxWidth.toPx() }
-        val viewHeightPx = with(LocalDensity.current) { maxHeight.toPx() }
+        val density = LocalDensity.current
+        val viewWidthPx = with(density) { maxWidth.toPx() }
+        val viewHeightPx = with(density) { maxHeight.toPx() }
 
-        if (bitmap != null) {
+        val currentBitmap = bitmap
+        if (currentBitmap != null) {
             Image(
-                bitmap = bitmap!!.asImageBitmap(),
+                bitmap = currentBitmap.asImageBitmap(),
                 contentDescription = "Full photo",
                 modifier = Modifier
                     .fillMaxSize()
@@ -1186,30 +1197,48 @@ private fun PhotoViewer(
                         translationX = offsetX
                         translationY = offsetY
                     }
-                    .pointerInput(uri, viewWidthPx, viewHeightPx, index, total) {
+                    .pointerInput(uri, viewWidthPx, viewHeightPx, index, total, currentBitmap) {
                         var swipeDistance = 0f
+                        var swipeHandled = false
+
                         detectTransformGestures { _, pan, zoomChange, _ ->
                             val newZoom = (zoom * zoomChange).coerceIn(1f, 5f)
+
                             if (newZoom > 1f) {
-                                val scaleFactor = newZoom / zoom
-                                val maxX = viewWidthPx * (newZoom - 1f) / 2f
-                                val maxY = viewHeightPx * (newZoom - 1f) / 2f
-                                offsetX = (offsetX * scaleFactor + pan.x).coerceIn(-maxX, maxX)
-                                offsetY = (offsetY * scaleFactor + pan.y).coerceIn(-maxY, maxY)
+                                // Calculate the actual fitted image bounds, not the whole
+                                // screen bounds, so the image can be dragged naturally.
+                                val fitScale = minOf(
+                                    viewWidthPx / currentBitmap.width.toFloat(),
+                                    viewHeightPx / currentBitmap.height.toFloat()
+                                )
+                                val fittedWidth = currentBitmap.width * fitScale
+                                val fittedHeight = currentBitmap.height * fitScale
+                                val maxX = ((fittedWidth * newZoom) - viewWidthPx)
+                                    .coerceAtLeast(0f) / 2f
+                                val maxY = ((fittedHeight * newZoom) - viewHeightPx)
+                                    .coerceAtLeast(0f) / 2f
+
+                                // 1:1 finger movement while zoomed; clamp only at image edges.
+                                offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
+                                offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
                                 zoom = newZoom
                                 swipeDistance = 0f
+                                swipeHandled = false
                             } else {
                                 zoom = 1f
                                 offsetX = 0f
                                 offsetY = 0f
-                                swipeDistance += pan.x
-                                val threshold = 70.dp.toPx()
-                                if (swipeDistance <= -threshold && index < total - 1) {
-                                    swipeDistance = 0f
-                                    onIndexChange(index + 1)
-                                } else if (swipeDistance >= threshold && index > 0) {
-                                    swipeDistance = 0f
-                                    onIndexChange(index - 1)
+
+                                if (!swipeHandled) {
+                                    swipeDistance += pan.x
+                                    val threshold = 70.dp.toPx()
+                                    if (swipeDistance <= -threshold && index < total - 1) {
+                                        swipeHandled = true
+                                        onIndexChange(index + 1)
+                                    } else if (swipeDistance >= threshold && index > 0) {
+                                        swipeHandled = true
+                                        onIndexChange(index - 1)
+                                    }
                                 }
                             }
                         }
