@@ -951,7 +951,7 @@ val bitmap by produceState<Bitmap?>(
             if (Build.VERSION.SDK_INT >= 29) {  
                 context.contentResolver.loadThumbnail(  
                     media.uri,  
-                    android.util.Size(400, 400),  
+                    android.util.Size(256, 256),  
                     null  
                 )  
             } else {  
@@ -2050,10 +2050,12 @@ private fun PrivacyFolderScreen(
                             // Match the main Gallery behavior: dragging across a row
                             // selects all three items in that row, including rows passed
                             // while the grid is auto-scrolling.
-                            fun selectAt(x: Float, y: Float) {
-                                val hit = pickerGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                                    x >= info.offset.x && x < info.offset.x + info.size.width &&
+                            fun selectAt(y: Float) {
+                                val visibleItems = pickerGridState.layoutInfo.visibleItemsInfo
+                                val hit = visibleItems.firstOrNull { info ->
                                     y >= info.offset.y && y < info.offset.y + info.size.height
+                                } ?: visibleItems.minByOrNull { info ->
+                                    kotlin.math.abs((info.offset.y + info.size.height / 2f) - y)
                                 } ?: return
                                 val targetRow = hit.index / 3
                                 val rows = if (lastSelectedRow < 0) {
@@ -2091,14 +2093,13 @@ private fun PrivacyFolderScreen(
                                         lastSelectedRow = -1
                                         accumulatedDy = 0f
                                         dragDirection = 1
-                                        selectAt(start.x, start.y)
+                                        selectAt(start.y)
                                     }
                                 },
                                 onDrag = { change, _ ->
                                     if (trackingPickerSelection) {
                                         change.consume()
                                         val pos = change.position
-                                        val dx = pos.x - lastX
                                         val dy = pos.y - lastY
                                         accumulatedDy += dy
                                         if (accumulatedDy >= 10f) {
@@ -2108,12 +2109,7 @@ private fun PrivacyFolderScreen(
                                             dragDirection = -1
                                             accumulatedDy = 0f
                                         }
-                                        val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                        val steps = kotlin.math.ceil(distance / 10f).toInt().coerceAtLeast(1)
-                                        for (step in 1..steps) {
-                                            val fraction = step.toFloat() / steps
-                                            selectAt(lastX + dx * fraction, lastY + dy * fraction)
-                                        }
+                                        selectAt(pos.y)
                                         lastX = pos.x
                                         lastY = pos.y
                                         val edge = 110.dp.toPx()
@@ -2125,8 +2121,8 @@ private fun PrivacyFolderScreen(
                                         if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
                                             autoScrollJob = pickerScope.launch {
                                                 while (edgeDirection != 0 && trackingPickerSelection) {
-                                                    pickerGridState.scrollBy(edgeDirection * 8f)
-                                                    selectAt(lastX, lastY)
+                                                    pickerGridState.scrollBy(edgeDirection * 9f)
+                                                    selectAt(lastY)
                                                     kotlinx.coroutines.delay(16L)
                                                 }
                                             }
@@ -2531,10 +2527,12 @@ private fun PrivacyFolderScreen(
 
                         // Match the main Gallery drag-selection behavior by selecting
                         // the full three-item row and every row crossed during auto-scroll.
-                        fun selectPrivateAt(x: Float, y: Float) {
-                            val hit = privateGridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                                x >= info.offset.x && x < info.offset.x + info.size.width &&
+                        fun selectPrivateAt(y: Float) {
+                            val visibleItems = privateGridState.layoutInfo.visibleItemsInfo
+                            val hit = visibleItems.firstOrNull { info ->
                                 y >= info.offset.y && y < info.offset.y + info.size.height
+                            } ?: visibleItems.minByOrNull { info ->
+                                kotlin.math.abs((info.offset.y + info.size.height / 2f) - y)
                             } ?: return
                             val targetRow = hit.index / 3
                             val rows = if (lastPrivateRow < 0) {
@@ -2575,14 +2573,13 @@ private fun PrivacyFolderScreen(
                                     lastPrivateRow = -1
                                     accumulatedDy = 0f
                                     privateDragDirection = 1
-                                    selectPrivateAt(start.x, start.y)
+                                    selectPrivateAt(start.y)
                                 }
                             },
                             onDrag = { change, _ ->
                                 if (trackingPrivateSelection) {
                                     change.consume()
                                     val pos = change.position
-                                    val dx = pos.x - lastX
                                     val dy = pos.y - lastY
                                     accumulatedDy += dy
                                     if (accumulatedDy >= 10f) {
@@ -2592,12 +2589,7 @@ private fun PrivacyFolderScreen(
                                         privateDragDirection = -1
                                         accumulatedDy = 0f
                                     }
-                                    val distance = kotlin.math.sqrt(dx * dx + dy * dy)
-                                    val steps = kotlin.math.ceil(distance / 10f).toInt().coerceAtLeast(1)
-                                    for (step in 1..steps) {
-                                        val fraction = step.toFloat() / steps
-                                        selectPrivateAt(lastX + dx * fraction, lastY + dy * fraction)
-                                    }
+                                    selectPrivateAt(pos.y)
                                     lastX = pos.x
                                     lastY = pos.y
 
@@ -2610,8 +2602,8 @@ private fun PrivacyFolderScreen(
                                     if (privateEdgeDirection != 0 && privateAutoScrollJob?.isActive != true) {
                                         privateAutoScrollJob = privateSelectionScope.launch {
                                             while (privateEdgeDirection != 0 && trackingPrivateSelection) {
-                                                privateGridState.scrollBy(privateEdgeDirection * 8f)
-                                                selectPrivateAt(lastX, lastY)
+                                                privateGridState.scrollBy(privateEdgeDirection * 9f)
+                                                selectPrivateAt(lastY)
                                                 kotlinx.coroutines.delay(16L)
                                             }
                                         }
