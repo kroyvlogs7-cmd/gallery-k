@@ -2287,12 +2287,16 @@ private fun PrivacyFolderScreen(
                         },
                         onClick = { onFingerprintEnabledChange(!fingerprintEnabled); privacyMenuExpanded = false }
                     )
+                    DropdownMenuItem(
+                        text = { Text("Change PIN") },
+                        onClick = {
+                            privacyMenuExpanded = false
+                            onChangePin()
+                        }
+                    )
                 }
             }
         }
-        Text("Choose photos and videos", color = Color.LightGray, fontSize = 16.sp)
-        OutlinedButton(onClick = onChangePin, modifier = Modifier.fillMaxWidth()) { Text("Change PIN") }
-
         Button(
             onClick = {
                 pickerSelectedUris = emptySet()
