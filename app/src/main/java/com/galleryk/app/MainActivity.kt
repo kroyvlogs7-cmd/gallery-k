@@ -1387,37 +1387,66 @@ private fun PhotoEditorScreen(
         }
     }
 
-    fun saturationForFilter(index: Int): Float = when (index) {
-        0 -> 1f
-        1 -> 1.18f
-        2 -> 1.28f
-        3 -> 0.72f
-        4 -> 0f
-        5 -> 0.82f
-        6 -> 1.12f
-        7 -> 0.88f
-        8 -> 1.55f
-        9 -> 0.68f
-        10 -> 0.62f
-        11 -> 0.76f
-        12 -> 0.84f
-        13 -> 1.08f
-        14 -> 1.32f
-        15 -> 1f
-        16 -> 1.22f
-        17 -> 0.92f
-        18 -> 1.42f
-        19 -> 0.66f
-        20 -> 1.16f
-        21 -> 1.12f
-        22 -> 0.12f
-        else -> 1.35f
+    var brightness by remember(uri) { mutableFloatStateOf(0f) }
+
+    // Each filter has its own color, contrast and warmth profile.
+    val filterProfiles = listOf(
+        floatArrayOf(1.00f, 1.00f, 0f, 0f),
+        floatArrayOf(1.22f, 1.12f, 3f, 0f),
+        floatArrayOf(1.30f, 1.08f, 7f, 0f),
+        floatArrayOf(0.72f, 0.92f, 5f, 0f),
+        floatArrayOf(0.00f, 1.28f, 2f, 0f),
+        floatArrayOf(0.82f, 1.08f, 10f, 0f),
+        floatArrayOf(1.18f, 1.05f, 5f, 0f),
+        floatArrayOf(0.86f, 1.08f, -4f, 0f),
+        floatArrayOf(1.55f, 1.18f, 0f, 0f),
+        floatArrayOf(0.68f, 0.90f, 8f, 0f),
+        floatArrayOf(0.62f, 1.24f, -5f, 0f),
+        floatArrayOf(0.76f, 0.82f, 10f, 0f),
+        floatArrayOf(0.84f, 1.10f, 6f, 0f),
+        floatArrayOf(1.08f, 1.04f, 3f, 0f),
+        floatArrayOf(1.32f, 1.12f, 12f, 0f),
+        floatArrayOf(1.00f, 1.10f, 0f, 0f),
+        floatArrayOf(1.22f, 1.10f, 8f, 0f),
+        floatArrayOf(0.92f, 1.08f, -3f, 0f),
+        floatArrayOf(1.42f, 1.28f, 1f, 0f),
+        floatArrayOf(0.66f, 0.84f, 8f, 0f),
+        floatArrayOf(1.16f, 1.04f, 5f, 0f),
+        floatArrayOf(1.12f, 1.08f, 2f, 0f),
+        floatArrayOf(0.12f, 1.18f, 0f, 0f),
+        floatArrayOf(1.35f, 1.12f, 9f, 0f)
+    )
+
+    fun createEditMatrix(): android.graphics.ColorMatrix {
+        val profile = filterProfiles[selectedFilter]
+        val amount = intensity / 100f
+        val saturation = 1f + (profile[0] - 1f) * amount
+        val contrast = 1f + (profile[1] - 1f) * amount
+        val filterBrightness = profile[2] * amount + brightness
+        val matrix = android.graphics.ColorMatrix()
+        matrix.setSaturation(saturation)
+        val contrastMatrix = android.graphics.ColorMatrix().apply {
+            set(floatArrayOf(
+                contrast, 0f, 0f, 0f, 128f * (1f - contrast),
+                0f, contrast, 0f, 0f, 128f * (1f - contrast),
+                0f, 0f, contrast, 0f, 128f * (1f - contrast),
+                0f, 0f, 0f, 1f, 0f
+            ))
+        }
+        matrix.postConcat(contrastMatrix)
+        val brightnessMatrix = android.graphics.ColorMatrix().apply {
+            set(floatArrayOf(
+                1f, 0f, 0f, 0f, filterBrightness,
+                0f, 1f, 0f, 0f, filterBrightness,
+                0f, 0f, 1f, 0f, filterBrightness,
+                0f, 0f, 0f, 1f, 0f
+            ))
+        }
+        matrix.postConcat(brightnessMatrix)
+        return matrix
     }
 
-    val saturation = 1f + (saturationForFilter(selectedFilter) - 1f) * (intensity / 100f)
-    val composeColorMatrix = androidx.compose.ui.graphics.ColorMatrix().apply {
-        setToSaturation(saturation)
-    }
+    val composeColorMatrix = androidx.compose.ui.graphics.ColorMatrix(createEditMatrix().array)
 
     Column(
         Modifier.fillMaxSize().background(Color(0xFF101114))
@@ -1439,6 +1468,7 @@ private fun PhotoEditorScreen(
                     .clickable(enabled = !saving && originalBitmap != null) {
                         val source = originalBitmap
                         if (source != null) {
+                            val editMatrix = createEditMatrix()
                             saving = true
                             scope.launch {
                                 val saved = withContext(Dispatchers.IO) {
@@ -1446,10 +1476,7 @@ private fun PhotoEditorScreen(
                                         val output = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
                                         val canvas = android.graphics.Canvas(output)
                                         val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-                                        val androidMatrix = android.graphics.ColorMatrix().apply {
-                                            setSaturation(saturation)
-                                        }
-                                        paint.colorFilter = android.graphics.ColorMatrixColorFilter(androidMatrix)
+                                        paint.colorFilter = android.graphics.ColorMatrixColorFilter(editMatrix)
                                         canvas.drawBitmap(source, 0f, 0f, paint)
                                         val values = ContentValues().apply {
                                             put(MediaStore.Images.Media.DISPLAY_NAME, "GalleryK_Edit_${System.currentTimeMillis()}.jpg")
@@ -1522,6 +1549,18 @@ private fun PhotoEditorScreen(
             value = intensity,
             onValueChange = { intensity = it },
             valueRange = 0f..100f,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
+        Text(
+            "Brightness  ${brightness.toInt()}",
+            color = Color.White,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+        )
+        Slider(
+            value = brightness,
+            onValueChange = { brightness = it },
+            valueRange = -100f..100f,
             modifier = Modifier.padding(horizontal = 12.dp)
         )
         Spacer(Modifier.height(14.dp))
