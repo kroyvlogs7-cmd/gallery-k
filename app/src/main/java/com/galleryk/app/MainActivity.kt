@@ -23,6 +23,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -49,6 +50,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -238,7 +242,8 @@ var albums by remember {
     mutableStateOf(listOf<PhotoAlbum>())  
 }  
 var selectedIndex by remember { mutableIntStateOf(-1) }
-var photoEditorOpen by remember { mutableStateOf(false) }  
+var photoEditorOpen by remember { mutableStateOf(false) }
+var cropScreenOpen by remember { mutableStateOf(false) }  
 var selectedAlbumId by remember { mutableStateOf<String?>(null) }  
 var selectedTab by remember { mutableStateOf("Photos") }  
 var permissionGranted by remember { mutableStateOf(false) }  
@@ -360,13 +365,14 @@ fun requestDelete() {
 }  
 
 BackHandler(  
-    enabled = privacyFolderScreen || photoEditorOpen || selectedPreviewMedia.isNotEmpty() || selectionMode ||  
+    enabled = privacyFolderScreen || cropScreenOpen || photoEditorOpen || selectedPreviewMedia.isNotEmpty() || selectionMode ||  
         selectedIndex >= 0 ||  
         selectedAlbumId != null ||  
         selectedTab != "Photos"  
 ) {  
     when {  
         privacyFolderScreen -> { showExitPrivacyDialog = true }
+        cropScreenOpen -> cropScreenOpen = false
         photoEditorOpen -> photoEditorOpen = false
         selectedPreviewMedia.isNotEmpty() -> { selectedPreviewMedia = emptyList(); selectedPreviewIndex = -1 }
         selectionMode -> {  
@@ -406,6 +412,17 @@ MaterialTheme {
                 )
             }
         } 
+        else if (cropScreenOpen && selectedIndex in displayedMedia.indices && !displayedMedia[selectedIndex].isVideo) {
+            PhotoCropScreen(
+                uri = displayedMedia[selectedIndex].uri,
+                onBack = { cropScreenOpen = false },
+                onSaved = {
+                    Toast.makeText(context, "Cropped photo saved as a copy", Toast.LENGTH_SHORT).show()
+                    cropScreenOpen = false
+                    refreshKey++
+                }
+            )
+        }
         else if (photoEditorOpen && selectedIndex in displayedMedia.indices && !displayedMedia[selectedIndex].isVideo) {
             PhotoEditorScreen(
                 uri = displayedMedia[selectedIndex].uri,
@@ -443,7 +460,8 @@ MaterialTheme {
                     total = displayedMedia.size,  
                     onBack = { selectedIndex = -1 },
                     onIndexChange = { selectedIndex = it },
-                    onEditClick = { photoEditorOpen = true }
+                    onEditClick = { photoEditorOpen = true },
+                    onCropClick = { cropScreenOpen = true }
                 )  
             }  
         } else {  
@@ -1220,7 +1238,8 @@ private fun PhotoViewer(
     onBack: () -> Unit,
     showHeader: Boolean = true,
     onIndexChange: (Int) -> Unit = {},
-    onEditClick: (() -> Unit)? = null
+    onEditClick: (() -> Unit)? = null,
+    onCropClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -1431,6 +1450,230 @@ private fun PhotoViewer(
                     Text("↗", color = Color.White, fontSize = 22.sp)
                     Text("Share", color = Color.White, fontSize = 11.sp)
                 }
+                if (onCropClick != null) {
+                    Column(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onCropClick)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("⌗", color = Color.White, fontSize = 22.sp)
+                        Text("Crop", color = Color.White, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun PhotoCropScreen(
+    uri: Uri,
+    onBack: () -> Unit,
+    onSaved: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var sourceBitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
+    var cropLeft by remember(uri) { mutableFloatStateOf(0.10f) }
+    var cropTop by remember(uri) { mutableFloatStateOf(0.10f) }
+    var cropRight by remember(uri) { mutableFloatStateOf(0.90f) }
+    var cropBottom by remember(uri) { mutableFloatStateOf(0.90f) }
+    var saving by remember { mutableStateOf(false) }
+    var selectedRatio by remember { mutableStateOf("Free") }
+
+    LaunchedEffect(uri) {
+        sourceBitmap = withContext(Dispatchers.IO) {
+            try {
+                context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it) }
+            } catch (_: Exception) { null }
+        }
+    }
+
+    fun setRatio(label: String, ratio: Float?) {
+        selectedRatio = label
+        val bitmap = sourceBitmap ?: return
+        val imageRatio = bitmap.width.toFloat() / bitmap.height.toFloat()
+        val maxW = 0.86f
+        val maxH = 0.86f
+        val w: Float
+        val h: Float
+        if (ratio == null) {
+            w = maxW
+            h = maxH
+        } else if (ratio >= imageRatio) {
+            w = maxW
+            h = (w * imageRatio / ratio).coerceAtMost(maxH)
+        } else {
+            h = maxH
+            w = (h * ratio / imageRatio).coerceAtMost(maxW)
+        }
+        cropLeft = (1f - w) / 2f
+        cropTop = (1f - h) / 2f
+        cropRight = cropLeft + w
+        cropBottom = cropTop + h
+    }
+
+    Column(Modifier.fillMaxSize().background(Color(0xFF101114))) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("‹", color = Color.White, fontSize = 32.sp, modifier = Modifier.clickable(onClick = onBack))
+            Spacer(Modifier.width(16.dp))
+            Text("Crop Photo", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text(
+                if (saving) "Saving..." else "Save Copy",
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(if (saving) Color.DarkGray else Color(0xFF6550A4))
+                    .clickable(enabled = !saving && sourceBitmap != null) {
+                        val bitmap = sourceBitmap ?: return@clickable
+                        val left = (cropLeft * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+                        val top = (cropTop * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+                        val right = (cropRight * bitmap.width).toInt().coerceIn(left + 1, bitmap.width)
+                        val bottom = (cropBottom * bitmap.height).toInt().coerceIn(top + 1, bitmap.height)
+                        saving = true
+                        scope.launch {
+                            val saved = withContext(Dispatchers.IO) {
+                                try {
+                                    val cropped = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+                                    val values = ContentValues().apply {
+                                        put(MediaStore.Images.Media.DISPLAY_NAME, "GalleryK_Crop_${System.currentTimeMillis()}.jpg")
+                                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Gallery K")
+                                            put(MediaStore.Images.Media.IS_PENDING, 1)
+                                        }
+                                    }
+                                    val outputUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                                    if (outputUri == null) false else {
+                                        val written = context.contentResolver.openOutputStream(outputUri)?.use { cropped.compress(Bitmap.CompressFormat.JPEG, 95, it) } ?: false
+                                        if (written && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                            val ready = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+                                            context.contentResolver.update(outputUri, ready, null, null)
+                                        }
+                                        if (!written) context.contentResolver.delete(outputUri, null, null)
+                                        written
+                                    }
+                                } catch (_: Exception) { false }
+                            }
+                            saving = false
+                            if (saved) onSaved() else Toast.makeText(context, "Could not save cropped photo", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 9.dp)
+            )
+        }
+
+        val bitmap = sourceBitmap
+        if (bitmap == null) {
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Color.White)
+            }
+        } else {
+            BoxWithConstraints(
+                Modifier.fillMaxWidth().weight(1f).padding(12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                val density = LocalDensity.current
+                val boxW = with(density) { maxWidth.toPx() }
+                val boxH = with(density) { maxHeight.toPx() }
+                val scale = minOf(boxW / bitmap.width.toFloat(), boxH / bitmap.height.toFloat())
+                val drawnW = bitmap.width * scale
+                val drawnH = bitmap.height * scale
+                val startX = (boxW - drawnW) / 2f
+                val startY = (boxH - drawnH) / 2f
+                val latestLeft = rememberUpdatedState(cropLeft)
+                val latestTop = rememberUpdatedState(cropTop)
+                val latestRight = rememberUpdatedState(cropRight)
+                val latestBottom = rememberUpdatedState(cropBottom)
+                Canvas(
+                    Modifier.fillMaxSize().pointerInput(bitmap) {
+                        var dragMode = 0 // 0 = move, 1-4 = resize from a corner
+                        detectDragGestures(
+                            onDragStart = { start ->
+                                val l = startX + latestLeft.value * drawnW
+                                val t = startY + latestTop.value * drawnH
+                                val r = startX + latestRight.value * drawnW
+                                val b = startY + latestBottom.value * drawnH
+                                val handleRadius = 32.dp.toPx()
+                                dragMode = when {
+                                    kotlin.math.hypot(start.x - l, start.y - t) <= handleRadius -> 1
+                                    kotlin.math.hypot(start.x - r, start.y - t) <= handleRadius -> 2
+                                    kotlin.math.hypot(start.x - l, start.y - b) <= handleRadius -> 3
+                                    kotlin.math.hypot(start.x - r, start.y - b) <= handleRadius -> 4
+                                    else -> 0
+                                }
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                val dx = dragAmount.x / drawnW
+                                val dy = dragAmount.y / drawnH
+                                var l = latestLeft.value
+                                var t = latestTop.value
+                                var r = latestRight.value
+                                var b = latestBottom.value
+                                when (dragMode) {
+                                    1 -> { l = (l + dx).coerceIn(0f, r - 0.05f); t = (t + dy).coerceIn(0f, b - 0.05f) }
+                                    2 -> { r = (r + dx).coerceIn(l + 0.05f, 1f); t = (t + dy).coerceIn(0f, b - 0.05f) }
+                                    3 -> { l = (l + dx).coerceIn(0f, r - 0.05f); b = (b + dy).coerceIn(t + 0.05f, 1f) }
+                                    4 -> { r = (r + dx).coerceIn(l + 0.05f, 1f); b = (b + dy).coerceIn(t + 0.05f, 1f) }
+                                    else -> {
+                                        val width = r - l
+                                        val height = b - t
+                                        l = (l + dx).coerceIn(0f, 1f - width)
+                                        t = (t + dy).coerceIn(0f, 1f - height)
+                                        r = l + width
+                                        b = t + height
+                                    }
+                                }
+                                cropLeft = l
+                                cropTop = t
+                                cropRight = r
+                                cropBottom = b
+                            }
+                        )
+                    }
+                ) {
+                    drawImage(
+                        bitmap.asImageBitmap(),
+                        dstOffset = IntOffset(startX.toInt(), startY.toInt()),
+                        dstSize = IntSize(drawnW.toInt(), drawnH.toInt())
+                    )
+                    val l = startX + cropLeft * drawnW
+                    val t = startY + cropTop * drawnH
+                    val r = startX + cropRight * drawnW
+                    val b = startY + cropBottom * drawnH
+                    val shade = Color(0x99000000)
+                    drawRect(shade, Offset(startX, startY), androidx.compose.ui.geometry.Size(drawnW, t - startY))
+                    drawRect(shade, Offset(startX, b), androidx.compose.ui.geometry.Size(drawnW, startY + drawnH - b))
+                    drawRect(shade, Offset(startX, t), androidx.compose.ui.geometry.Size(l - startX, b - t))
+                    drawRect(shade, Offset(r, t), androidx.compose.ui.geometry.Size(startX + drawnW - r, b - t))
+                    drawRect(Color.White, Offset(l, t), androidx.compose.ui.geometry.Size(r - l, b - t), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+                    val handle = 10.dp.toPx()
+                    listOf(Offset(l, t), Offset(r, t), Offset(l, b), Offset(r, b)).forEach { point ->
+                        drawCircle(Color.White, handle / 2f, point)
+                    }
+                }
+            }
+            Text("Drag the crop frame to reposition it", color = Color.LightGray, fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterHorizontally).padding(vertical = 6.dp))
+        }
+
+        Row(
+            Modifier.fillMaxWidth().navigationBarsPadding().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf("Free" to null, "1:1" to 1f, "4:3" to (4f / 3f), "16:9" to (16f / 9f), "9:16" to (9f / 16f)).forEach { (label, ratio) ->
+                OutlinedButton(
+                    onClick = { setRatio(label, ratio) },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, if (selectedRatio == label) Color(0xFF8B70D6) else Color.Gray)
+                ) { Text(label) }
             }
         }
     }
