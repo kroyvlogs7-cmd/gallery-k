@@ -234,7 +234,8 @@ var allMedia by remember {
 var albums by remember {  
     mutableStateOf(listOf<PhotoAlbum>())  
 }  
-var selectedIndex by remember { mutableIntStateOf(-1) }  
+var selectedIndex by remember { mutableIntStateOf(-1) }
+var photoEditorOpen by remember { mutableStateOf(false) }  
 var selectedAlbumId by remember { mutableStateOf<String?>(null) }  
 var selectedTab by remember { mutableStateOf("Photos") }  
 var permissionGranted by remember { mutableStateOf(false) }  
@@ -355,13 +356,14 @@ fun requestDelete() {
 }  
 
 BackHandler(  
-    enabled = privacyFolderScreen || selectedPreviewMedia.isNotEmpty() || selectionMode ||  
+    enabled = privacyFolderScreen || photoEditorOpen || selectedPreviewMedia.isNotEmpty() || selectionMode ||  
         selectedIndex >= 0 ||  
         selectedAlbumId != null ||  
         selectedTab != "Photos"  
 ) {  
     when {  
         privacyFolderScreen -> { privacyFolderScreen = false; privacyPinUnlocked = false; privacyPinChanging = false }
+        photoEditorOpen -> photoEditorOpen = false
         selectedPreviewMedia.isNotEmpty() -> { selectedPreviewMedia = emptyList(); selectedPreviewIndex = -1 }
         selectionMode -> {  
             selectionMode = false  
@@ -400,6 +402,17 @@ MaterialTheme {
                 )
             }
         } 
+        else if (photoEditorOpen && selectedIndex in displayedMedia.indices && !displayedMedia[selectedIndex].isVideo) {
+            PhotoEditorScreen(
+                uri = displayedMedia[selectedIndex].uri,
+                onBack = { photoEditorOpen = false },
+                onSaved = {
+                    Toast.makeText(context, "Edited photo saved as a copy", Toast.LENGTH_SHORT).show()
+                    photoEditorOpen = false
+                    refreshKey++
+                }
+            )
+        }
         else if (selectedPreviewMedia.isNotEmpty()) {
             SelectedMediaPreview(
                 mediaItems = selectedPreviewMedia,
@@ -425,7 +438,8 @@ MaterialTheme {
                     index = selectedIndex,  
                     total = displayedMedia.size,  
                     onBack = { selectedIndex = -1 },
-                    onIndexChange = { selectedIndex = it }
+                    onIndexChange = { selectedIndex = it },
+                    onEditClick = { photoEditorOpen = true }
                 )  
             }  
         } else {  
@@ -1162,7 +1176,8 @@ private fun PhotoViewer(
     total: Int,
     onBack: () -> Unit,
     showHeader: Boolean = true,
-    onIndexChange: (Int) -> Unit = {}
+    onIndexChange: (Int) -> Unit = {},
+    onEditClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -1320,10 +1335,196 @@ private fun PhotoViewer(
                 Text(
                     "Photo ${index + 1} / $total",
                     color = Color.White,
-                    fontSize = 17.sp
+                    fontSize = 17.sp,
+                    modifier = Modifier.weight(1f)
                 )
+                if (onEditClick != null) {
+                    Text(
+                        "Edit",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color(0xFF6550A4))
+                            .clickable(onClick = onEditClick)
+                            .padding(horizontal = 18.dp, vertical = 9.dp)
+                    )
+                }
             }
         }
+    }
+}
+
+
+@Composable
+private fun PhotoEditorScreen(
+    uri: Uri,
+    onBack: () -> Unit,
+    onSaved: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var originalBitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
+    var selectedFilter by remember(uri) { mutableIntStateOf(0) }
+    var intensity by remember(uri) { mutableFloatStateOf(100f) }
+    var saving by remember { mutableStateOf(false) }
+
+    val filters = listOf(
+        "Original", "Cinematic", "Golden", "Vintage", "Noir", "Dreamy",
+        "Warm", "Cool", "Vivid", "Soft", "Moody", "Fade",
+        "Retro", "Portrait", "Glow", "Classic", "Autumn", "Ocean",
+        "Drama", "Matte", "Rose", "Forest", "Silver", "Sunset"
+    )
+
+    LaunchedEffect(uri) {
+        originalBitmap = withContext(Dispatchers.IO) {
+            try {
+                context.contentResolver.openInputStream(uri)?.use {
+                    android.graphics.BitmapFactory.decodeStream(it)
+                }
+            } catch (_: Exception) { null }
+        }
+    }
+
+    fun saturationForFilter(index: Int): Float = when (index) {
+        0 -> 1f
+        1 -> 1.18f
+        2 -> 1.28f
+        3 -> 0.72f
+        4 -> 0f
+        5 -> 0.82f
+        6 -> 1.12f
+        7 -> 0.88f
+        8 -> 1.55f
+        9 -> 0.68f
+        10 -> 0.62f
+        11 -> 0.76f
+        12 -> 0.84f
+        13 -> 1.08f
+        14 -> 1.32f
+        15 -> 1f
+        16 -> 1.22f
+        17 -> 0.92f
+        18 -> 1.42f
+        19 -> 0.66f
+        20 -> 1.16f
+        21 -> 1.12f
+        22 -> 0.12f
+        else -> 1.35f
+    }
+
+    val saturation = 1f + (saturationForFilter(selectedFilter) - 1f) * (intensity / 100f)
+    val composeColorMatrix = androidx.compose.ui.graphics.ColorMatrix().apply {
+        setToSaturation(saturation)
+    }
+
+    Column(
+        Modifier.fillMaxSize().background(Color(0xFF101114))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("‹", color = Color.White, fontSize = 34.sp, modifier = Modifier.clickable(onClick = onBack))
+            Spacer(Modifier.width(16.dp))
+            Text("Photo Editor", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text(
+                if (saving) "Saving..." else "Save Copy",
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(if (saving) Color.DarkGray else Color(0xFF6550A4))
+                    .clickable(enabled = !saving && originalBitmap != null) {
+                        val source = originalBitmap
+                        if (source != null) {
+                            saving = true
+                            scope.launch {
+                                val saved = withContext(Dispatchers.IO) {
+                                    try {
+                                        val output = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+                                        val canvas = android.graphics.Canvas(output)
+                                        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+                                        val androidMatrix = android.graphics.ColorMatrix().apply {
+                                            setSaturation(saturation)
+                                        }
+                                        paint.colorFilter = android.graphics.ColorMatrixColorFilter(androidMatrix)
+                                        canvas.drawBitmap(source, 0f, 0f, paint)
+                                        val values = ContentValues().apply {
+                                            put(MediaStore.Images.Media.DISPLAY_NAME, "GalleryK_Edit_${System.currentTimeMillis()}.jpg")
+                                            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Gallery K")
+                                            }
+                                        }
+                                        val outputUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                                        val written = outputUri?.let { target ->
+                                            context.contentResolver.openOutputStream(target)?.use { stream ->
+                                                output.compress(Bitmap.CompressFormat.JPEG, 95, stream)
+                                            } ?: false
+                                        } ?: false
+                                        output.recycle()
+                                        written
+                                    } catch (_: Exception) { false }
+                                }
+                                saving = false
+                                if (saved) onSaved()
+                                else Toast.makeText(context, "Could not save edited photo", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                    .padding(horizontal = 16.dp, vertical = 9.dp)
+            )
+        }
+
+        Box(
+            Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            val image = originalBitmap
+            if (image != null) {
+                Image(
+                    bitmap = image.asImageBitmap(),
+                    contentDescription = "Edited photo preview",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                    colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(composeColorMatrix)
+                )
+            } else {
+                CircularProgressIndicator(color = Color.White)
+            }
+        }
+
+        Text("FILTERS", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp))
+        androidx.compose.foundation.lazy.LazyRow(
+            contentPadding = PaddingValues(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(filters.size) { filterIndex ->
+                Column(
+                    Modifier.width(76.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (selectedFilter == filterIndex) Color(0xFF6550A4) else Color(0xFF25262B))
+                        .clickable { selectedFilter = filterIndex }
+                        .padding(vertical = 10.dp, horizontal = 5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(filters[filterIndex], color = Color.White, fontSize = 11.sp, maxLines = 1)
+                }
+            }
+        }
+
+        Text("Intensity  ${intensity.toInt()}%", color = Color.White, fontSize = 13.sp,
+            modifier = Modifier.padding(start = 16.dp, top = 14.dp))
+        Slider(
+            value = intensity,
+            onValueChange = { intensity = it },
+            valueRange = 0f..100f,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
+        Spacer(Modifier.height(14.dp))
     }
 }
 
