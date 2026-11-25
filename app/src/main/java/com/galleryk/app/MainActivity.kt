@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.KeyguardManager
 import android.content.ContentUris
+import android.content.Intent
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -24,6 +25,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
@@ -37,6 +39,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -1338,18 +1341,55 @@ private fun PhotoViewer(
                     fontSize = 17.sp,
                     modifier = Modifier.weight(1f)
                 )
+            }
+        }
+
+        if (showHeader) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(Color(0xEE17181D))
+                    .navigationBarsPadding()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(22.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 if (onEditClick != null) {
-                    Text(
-                        "Edit",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
+                    Column(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Color(0xFF6550A4))
+                            .clip(RoundedCornerShape(10.dp))
                             .clickable(onClick = onEditClick)
-                            .padding(horizontal = 18.dp, vertical = 9.dp)
-                    )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("✎", color = Color.White, fontSize = 22.sp)
+                        Text("Edit", color = Color.White, fontSize = 11.sp)
+                    }
+                }
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            try {
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "image/*"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(
+                                    Intent.createChooser(shareIntent, "Share photo")
+                                )
+                            } catch (_: Exception) {
+                                Toast.makeText(context, "Unable to share photo", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("↗", color = Color.White, fontSize = 22.sp)
+                    Text("Share", color = Color.White, fontSize = 11.sp)
                 }
             }
         }
