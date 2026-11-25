@@ -1959,7 +1959,7 @@ private fun PrivacyFolderScreen(
         }
         val pickerGridState = rememberLazyGridState()
         val pickerScope = rememberCoroutineScope()
-        val latestPickerSelection by rememberUpdatedState(pickerSelectedUris)
+        val latestPickerSelection = rememberUpdatedState(pickerSelectedUris)
 
         Column(
             modifier = Modifier
@@ -2041,7 +2041,7 @@ private fun PrivacyFolderScreen(
                             var lastY = 0f
                             var edgeDirection = 0
                             var trackingPickerSelection = false
-                            var dragSelectedUris = latestPickerSelection
+                            var dragSelectedUris = emptySet<Uri>()
                             var lastSelectedRow = -1
                             var accumulatedDy = 0f
                             var dragDirection = 1
@@ -2082,9 +2082,9 @@ private fun PrivacyFolderScreen(
 
                             detectDragGestures(
                                 onDragStart = { start ->
-                                    trackingPickerSelection = latestPickerSelection.isNotEmpty()
+                                    trackingPickerSelection = latestPickerSelection.value.isNotEmpty()
                                     if (trackingPickerSelection) {
-                                        dragSelectedUris = latestPickerSelection
+                                        dragSelectedUris = latestPickerSelection.value
                                         lastX = start.x
                                         lastY = start.y
                                         edgeDirection = 0
@@ -2125,7 +2125,7 @@ private fun PrivacyFolderScreen(
                                         if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
                                             autoScrollJob = pickerScope.launch {
                                                 while (edgeDirection != 0 && trackingPickerSelection) {
-                                                    pickerGridState.scrollBy(edgeDirection * 14f)
+                                                    pickerGridState.scrollBy(edgeDirection * 8f)
                                                     selectAt(lastX, lastY)
                                                     kotlinx.coroutines.delay(16L)
                                                 }
@@ -2511,7 +2511,7 @@ private fun PrivacyFolderScreen(
                 Text("No saved media yet.", color = Color.Gray)
             }
         } else {
-            val latestPrivateSelected by rememberUpdatedState(selectedPrivateFiles)
+            val latestPrivateSelected = rememberUpdatedState(selectedPrivateFiles)
             val privateGridState = rememberLazyGridState()
             val privateSelectionScope = rememberCoroutineScope()
             Box(
@@ -2524,7 +2524,7 @@ private fun PrivacyFolderScreen(
                         var privateEdgeDirection = 0
                         var trackingPrivateSelection = false
                         var privateAutoScrollJob: kotlinx.coroutines.Job? = null
-                        var dragSelectedPaths = latestPrivateSelected
+                        var dragSelectedPaths = emptySet<String>()
                         var lastPrivateRow = -1
                         var accumulatedDy = 0f
                         var privateDragDirection = 1
@@ -2565,10 +2565,10 @@ private fun PrivacyFolderScreen(
                             onDragStart = { start ->
                                 // Keep this pointerInput keyed only by the media list. A selection
                                 // state change must not cancel the active drag gesture.
-                                trackingPrivateSelection = latestPrivateSelected.isNotEmpty()
+                                trackingPrivateSelection = latestPrivateSelected.value.isNotEmpty()
                                 privateSelectionDragging = trackingPrivateSelection
                                 if (trackingPrivateSelection) {
-                                    dragSelectedPaths = latestPrivateSelected
+                                    dragSelectedPaths = latestPrivateSelected.value
                                     lastX = start.x
                                     lastY = start.y
                                     privateEdgeDirection = 0
@@ -2610,7 +2610,7 @@ private fun PrivacyFolderScreen(
                                     if (privateEdgeDirection != 0 && privateAutoScrollJob?.isActive != true) {
                                         privateAutoScrollJob = privateSelectionScope.launch {
                                             while (privateEdgeDirection != 0 && trackingPrivateSelection) {
-                                                privateGridState.scrollBy(privateEdgeDirection * 14f)
+                                                privateGridState.scrollBy(privateEdgeDirection * 8f)
                                                 selectPrivateAt(lastX, lastY)
                                                 kotlinx.coroutines.delay(16L)
                                             }
@@ -2667,7 +2667,21 @@ private fun PrivacyFolderScreen(
                                 } catch (_: Exception) { null }
                             } else {
                                 try {
-                                    android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                                    val bounds = android.graphics.BitmapFactory.Options().apply {
+                                        inJustDecodeBounds = true
+                                    }
+                                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, bounds)
+                                    var sampleSize = 1
+                                    while (
+                                        bounds.outWidth / sampleSize > 400 ||
+                                        bounds.outHeight / sampleSize > 400
+                                    ) {
+                                        sampleSize *= 2
+                                    }
+                                    val options = android.graphics.BitmapFactory.Options().apply {
+                                        inSampleSize = sampleSize
+                                    }
+                                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
                                 } catch (_: Exception) { null }
                             }
                         }
