@@ -1594,19 +1594,27 @@ private fun PhotoCropScreen(
                 val latestBottom = rememberUpdatedState(cropBottom)
                 Canvas(
                     Modifier.fillMaxSize().pointerInput(bitmap) {
-                        var dragMode = 0 // 0 = move, 1-4 = resize from a corner
+                        // Free crop: corners resize both axes, edge handles resize one
+                        // axis, and dragging inside the frame moves the whole selection.
+                        var dragMode = 0 // 0 = move, 1-4 = corners, 5-8 = edges
                         detectDragGestures(
                             onDragStart = { start ->
                                 val l = startX + latestLeft.value * drawnW
                                 val t = startY + latestTop.value * drawnH
                                 val r = startX + latestRight.value * drawnW
                                 val b = startY + latestBottom.value * drawnH
-                                val handleRadius = 32.dp.toPx()
+                                val midX = (l + r) / 2f
+                                val midY = (t + b) / 2f
+                                val handleRadius = 38.dp.toPx()
                                 dragMode = when {
                                     kotlin.math.hypot(start.x - l, start.y - t) <= handleRadius -> 1
                                     kotlin.math.hypot(start.x - r, start.y - t) <= handleRadius -> 2
                                     kotlin.math.hypot(start.x - l, start.y - b) <= handleRadius -> 3
                                     kotlin.math.hypot(start.x - r, start.y - b) <= handleRadius -> 4
+                                    kotlin.math.hypot(start.x - l, start.y - midY) <= handleRadius -> 5
+                                    kotlin.math.hypot(start.x - r, start.y - midY) <= handleRadius -> 6
+                                    kotlin.math.hypot(start.x - midX, start.y - t) <= handleRadius -> 7
+                                    kotlin.math.hypot(start.x - midX, start.y - b) <= handleRadius -> 8
                                     else -> 0
                                 }
                             },
@@ -1619,10 +1627,14 @@ private fun PhotoCropScreen(
                                 var r = latestRight.value
                                 var b = latestBottom.value
                                 when (dragMode) {
-                                    1 -> { l = (l + dx).coerceIn(0f, r - 0.05f); t = (t + dy).coerceIn(0f, b - 0.05f) }
-                                    2 -> { r = (r + dx).coerceIn(l + 0.05f, 1f); t = (t + dy).coerceIn(0f, b - 0.05f) }
-                                    3 -> { l = (l + dx).coerceIn(0f, r - 0.05f); b = (b + dy).coerceIn(t + 0.05f, 1f) }
-                                    4 -> { r = (r + dx).coerceIn(l + 0.05f, 1f); b = (b + dy).coerceIn(t + 0.05f, 1f) }
+                                    1 -> { l = (l + dx).coerceIn(0f, r - 0.01f); t = (t + dy).coerceIn(0f, b - 0.01f) }
+                                    2 -> { r = (r + dx).coerceIn(l + 0.01f, 1f); t = (t + dy).coerceIn(0f, b - 0.01f) }
+                                    3 -> { l = (l + dx).coerceIn(0f, r - 0.01f); b = (b + dy).coerceIn(t + 0.01f, 1f) }
+                                    4 -> { r = (r + dx).coerceIn(l + 0.01f, 1f); b = (b + dy).coerceIn(t + 0.01f, 1f) }
+                                    5 -> l = (l + dx).coerceIn(0f, r - 0.01f)
+                                    6 -> r = (r + dx).coerceIn(l + 0.01f, 1f)
+                                    7 -> t = (t + dy).coerceIn(0f, b - 0.01f)
+                                    8 -> b = (b + dy).coerceIn(t + 0.01f, 1f)
                                     else -> {
                                         val width = r - l
                                         val height = b - t
@@ -1655,13 +1667,25 @@ private fun PhotoCropScreen(
                     drawRect(shade, Offset(startX, t), androidx.compose.ui.geometry.Size(l - startX, b - t))
                     drawRect(shade, Offset(r, t), androidx.compose.ui.geometry.Size(startX + drawnW - r, b - t))
                     drawRect(Color.White, Offset(l, t), androidx.compose.ui.geometry.Size(r - l, b - t), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
-                    val handle = 10.dp.toPx()
-                    listOf(Offset(l, t), Offset(r, t), Offset(l, b), Offset(r, b)).forEach { point ->
+                    val handle = 11.dp.toPx()
+                    val midX = (l + r) / 2f
+                    val midY = (t + b) / 2f
+                    // Eight touch handles make free-form adjustment easier on a phone.
+                    listOf(
+                        Offset(l, t), Offset(r, t), Offset(l, b), Offset(r, b),
+                        Offset(l, midY), Offset(r, midY), Offset(midX, t), Offset(midX, b)
+                    ).forEach { point ->
                         drawCircle(Color.White, handle / 2f, point)
+                        drawCircle(Color(0xFF6550A4), handle / 4f, point)
                     }
                 }
             }
-            Text("Drag the crop frame to reposition it", color = Color.LightGray, fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterHorizontally).padding(vertical = 6.dp))
+            Text(
+                "Free crop: drag any handle to resize, or drag inside to move",
+                color = Color.LightGray,
+                fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.CenterHorizontally).padding(vertical = 6.dp)
+            )
         }
 
         Row(
