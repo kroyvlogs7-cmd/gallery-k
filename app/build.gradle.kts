@@ -49,6 +49,9 @@ dependencies {
     // Built-in Video Player
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
+    // Video text overlays and MP4 export
+    implementation("androidx.media3:media3-transformer:1.5.1")
+    implementation("androidx.media3:media3-effect:1.5.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
