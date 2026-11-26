@@ -74,7 +74,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.effect.CanvasOverlay
+import androidx.media3.effect.BitmapOverlay
+import androidx.media3.common.util.Size as Media3Size
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
@@ -1970,12 +1971,40 @@ private fun drawGalleryTextLayer(
 @OptIn(UnstableApi::class)
 private class GalleryTimedTextOverlay(
     private val layers: List<GalleryTextLayer>
-) : CanvasOverlay(true) {
-    override fun onDraw(canvas: android.graphics.Canvas, presentationTimeUs: Long) {
+) : BitmapOverlay() {
+    private var overlayWidth: Int = 1
+    private var overlayHeight: Int = 1
+    private var overlayBitmap: Bitmap? = null
+
+    override fun configure(videoSize: Media3Size) {
+        super.configure(videoSize)
+        val newWidth = videoSize.width.coerceAtLeast(1)
+        val newHeight = videoSize.height.coerceAtLeast(1)
+        if (newWidth != overlayWidth || newHeight != overlayHeight || overlayBitmap == null) {
+            overlayBitmap?.recycle()
+            overlayWidth = newWidth
+            overlayHeight = newHeight
+            overlayBitmap = Bitmap.createBitmap(overlayWidth, overlayHeight, Bitmap.Config.ARGB_8888)
+        }
+    }
+
+    override fun getBitmap(presentationTimeUs: Long): Bitmap {
+        val bitmap = overlayBitmap ?: Bitmap.createBitmap(
+            overlayWidth, overlayHeight, Bitmap.Config.ARGB_8888
+        ).also { overlayBitmap = it }
+        bitmap.eraseColor(android.graphics.Color.TRANSPARENT)
+        val canvas = android.graphics.Canvas(bitmap)
         val timeMs = presentationTimeUs / 1000L
         layers.forEach { layer ->
-            drawGalleryTextLayer(canvas, layer, canvas.width, canvas.height, timeMs, true)
+            drawGalleryTextLayer(canvas, layer, overlayWidth, overlayHeight, timeMs, true)
         }
+        return bitmap
+    }
+
+    override fun release() {
+        overlayBitmap?.recycle()
+        overlayBitmap = null
+        super.release()
     }
 }
 
@@ -2086,10 +2115,7 @@ private fun TextStudioScreen(
                 Text("Text Studio", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text(if (media.isVideo) "Video Text Editor" else "Photo Text Editor", color = Color.Gray, fontSize = 11.sp)
             }
-            Text(
-                if (exporting) "Exporting…" else "Save",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
+            Box(
                 modifier = Modifier.clip(RoundedCornerShape(18.dp))
                     .background(if (exporting) Color.DarkGray else Color(0xFF315C91))
                     .clickable(enabled = !exporting && layers.any { it.text.isNotBlank() }) {
@@ -2211,8 +2237,15 @@ private fun TextStudioScreen(
                             }
                         }
                     }
-                    .padding(horizontal = 18.dp, vertical = 9.dp)
-            ) { Text(if (exporting) "Exporting…" else "Save", color = Color.White) }
+                    .padding(horizontal = 18.dp, vertical = 9.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (exporting) "Exporting…" else "Save",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         BoxWithConstraints(
