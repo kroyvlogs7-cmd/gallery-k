@@ -1788,6 +1788,8 @@ private fun PhotoViewer(
     onSlideshowClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    var showDetailsDialog by remember(uri) { mutableStateOf(false) }
+    var detailsText by remember(uri) { mutableStateOf("Loading details...") }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
     var offsetX by remember(uri) { mutableFloatStateOf(0f) }
@@ -2020,8 +2022,100 @@ private fun PhotoViewer(
                         Text("Crop", color = Color.White, fontSize = 11.sp)
                     }
                 }
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            try {
+                                val wallpaperIntent = Intent(Intent.ACTION_ATTACH_DATA).apply {
+                                    setDataAndType(uri, "image/*")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    putExtra("mimeType", "image/*")
+                                }
+                                context.startActivity(Intent.createChooser(wallpaperIntent, "Set as wallpaper"))
+                            } catch (_: Exception) {
+                                Toast.makeText(context, "Wallpaper option is not available", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("▧", color = Color.White, fontSize = 22.sp)
+                    Text("Wallpaper", color = Color.White, fontSize = 11.sp)
+                }
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            detailsText = try {
+                                val columns = arrayOf(
+                                    MediaStore.MediaColumns.DISPLAY_NAME,
+                                    MediaStore.MediaColumns.SIZE,
+                                    MediaStore.MediaColumns.MIME_TYPE,
+                                    MediaStore.MediaColumns.WIDTH,
+                                    MediaStore.MediaColumns.HEIGHT,
+                                    MediaStore.MediaColumns.DATE_ADDED,
+                                    MediaStore.MediaColumns.RELATIVE_PATH
+                                )
+                                var name = "Unknown"
+                                var size = "Unknown"
+                                var mime = "Unknown"
+                                var width = "Unknown"
+                                var height = "Unknown"
+                                var date = "Unknown"
+                                var path = "Not available"
+                                context.contentResolver.query(uri, columns, null, null, null)?.use { cursor ->
+                                    if (cursor.moveToFirst()) {
+                                        fun value(column: String): String? {
+                                            val i = cursor.getColumnIndex(column)
+                                            return if (i >= 0 && !cursor.isNull(i)) cursor.getString(i) else null
+                                        }
+                                        name = value(MediaStore.MediaColumns.DISPLAY_NAME) ?: name
+                                        size = value(MediaStore.MediaColumns.SIZE)?.toLongOrNull()?.let {
+                                            android.text.format.Formatter.formatShortFileSize(context, it)
+                                        } ?: size
+                                        mime = value(MediaStore.MediaColumns.MIME_TYPE) ?: mime
+                                        width = value(MediaStore.MediaColumns.WIDTH) ?: width
+                                        height = value(MediaStore.MediaColumns.HEIGHT) ?: height
+                                        date = value(MediaStore.MediaColumns.DATE_ADDED)?.toLongOrNull()?.let {
+                                            java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault())
+                                                .format(java.util.Date(it * 1000L))
+                                        } ?: date
+                                        path = value(MediaStore.MediaColumns.RELATIVE_PATH) ?: path
+                                    }
+                                }
+                                "Name: $name\nSize: $size\nType: $mime\nResolution: $width × $height\nDate added: $date\nFolder: $path\nURI: $uri"
+                            } catch (_: Exception) {
+                                "Unable to load file details."
+                            }
+                            showDetailsDialog = true
+                        }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("ⓘ", color = Color.White, fontSize = 22.sp)
+                    Text("Details", color = Color.White, fontSize = 11.sp)
+                }
             }
         }
+    }
+
+    if (showDetailsDialog) {
+        AlertDialog(
+            onDismissRequest = { showDetailsDialog = false },
+            title = { Text("Photo Details") },
+            text = {
+                Text(
+                    detailsText,
+                    modifier = Modifier.heightIn(max = 360.dp)
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showDetailsDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
     }
 }
 
