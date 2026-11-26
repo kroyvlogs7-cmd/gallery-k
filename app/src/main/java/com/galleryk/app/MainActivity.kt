@@ -402,6 +402,9 @@ var selectionMode by remember { mutableStateOf(false) }
 var selectedUris by remember { mutableStateOf(setOf<Uri>()) }  
 var selectedPreviewMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
 var selectedPreviewIndex by remember { mutableIntStateOf(-1) }
+var slideshowActive by remember { mutableStateOf(false) }
+var slideshowMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
+var slideshowStartIndex by remember { mutableIntStateOf(0) }
 var refreshKey by remember { mutableIntStateOf(0) }  
 var privacyFolderScreen by remember { mutableStateOf(false) }
 var showExitPrivacyDialog by remember { mutableStateOf(false) }
@@ -513,7 +516,7 @@ fun requestDelete() {
 }  
 
 BackHandler(  
-    enabled = privacyFolderScreen || recentlyDeletedScreen || cropScreenOpen || photoEditorOpen || selectedPreviewMedia.isNotEmpty() || selectionMode ||
+    enabled = privacyFolderScreen || recentlyDeletedScreen || slideshowActive || cropScreenOpen || photoEditorOpen || selectedPreviewMedia.isNotEmpty() || selectionMode ||
         selectedIndex >= 0 ||  
         selectedAlbumId != null ||  
         selectedTab != "Photos"  
@@ -522,6 +525,7 @@ BackHandler(
         // Back from the Change PIN screen should return to the unlocked Privacy Folder,
         // not trigger the folder's Exit Privacy confirmation.
         recentlyDeletedScreen -> { recentlyDeletedScreen = false }
+        slideshowActive -> { slideshowActive = false }
         privacyFolderScreen && privacyPinChanging -> {
             privacyPinChanging = false
             privacyPinUnlocked = true
@@ -567,6 +571,13 @@ MaterialTheme {
                     onFingerprintEnabledChange = { enabled -> fingerprintEnabled = enabled; pinPrefs.edit().putBoolean("fingerprint_enabled", enabled).apply() }
                 )
             }
+        }
+        else if (slideshowActive) {
+            SlideshowScreen(
+                media = slideshowMedia,
+                startIndex = slideshowStartIndex,
+                onBack = { slideshowActive = false }
+            )
         }
         else if (recentlyDeletedScreen) {
             RecentlyDeletedScreen(
@@ -644,7 +655,13 @@ MaterialTheme {
                     onBack = { selectedIndex = -1 },
                     onIndexChange = { selectedIndex = it },
                     onEditClick = { photoEditorOpen = true },
-                    onCropClick = { cropScreenOpen = true }
+                    onCropClick = { cropScreenOpen = true },
+                    onSlideshowClick = {
+                        val photos = displayedMedia.filter { !it.isVideo }
+                        slideshowMedia = photos
+                        slideshowStartIndex = photos.indexOfFirst { it.uri == current.uri }.coerceAtLeast(0)
+                        slideshowActive = photos.isNotEmpty()
+                    }
                 )  
             }  
         } else {  
@@ -860,6 +877,24 @@ MaterialTheme {
                     }  
 
                     else -> {  
+                        if (selectedTab == "Albums" && selectedAlbumId != null) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(
+                                    enabled = displayedMedia.any { !it.isVideo },
+                                    onClick = {
+                                        val photosForSlideshow = displayedMedia.filter { !it.isVideo }
+                                        slideshowMedia = photosForSlideshow
+                                        slideshowStartIndex = 0
+                                        slideshowActive = photosForSlideshow.isNotEmpty()
+                                    }
+                                ) {
+                                    Text("▶ Slideshow", color = Color.White)
+                                }
+                            }
+                        }
                         Text(  
                             "${displayedMedia.size} ${  
                                 if (selectedTab == "Videos") {  
@@ -1634,6 +1669,112 @@ private fun SelectedMediaPreview(
 }
 
 @Composable
+private fun SlideshowScreen(
+    media: List<GalleryMedia>,
+    startIndex: Int,
+    onBack: () -> Unit
+) {
+    val photos = remember(media) { media.filter { !it.isVideo } }
+    var currentIndex by remember(photos, startIndex) {
+        mutableIntStateOf(startIndex.coerceIn(0, (photos.size - 1).coerceAtLeast(0)))
+    }
+    var isPlaying by remember { mutableStateOf(true) }
+    var intervalSeconds by remember { mutableIntStateOf(3) }
+    var shuffle by remember { mutableStateOf(false) }
+    var repeat by remember { mutableStateOf(true) }
+
+    fun nextPhoto() {
+        if (photos.isEmpty()) return
+        currentIndex = when {
+            shuffle && photos.size > 1 -> {
+                var next = currentIndex
+                while (next == currentIndex) next = kotlin.random.Random.nextInt(photos.size)
+                next
+            }
+            currentIndex < photos.lastIndex -> currentIndex + 1
+            repeat -> 0
+            else -> {
+                isPlaying = false
+                currentIndex
+            }
+        }
+    }
+
+    LaunchedEffect(isPlaying, currentIndex, intervalSeconds, shuffle, repeat, photos.size) {
+        if (isPlaying && photos.isNotEmpty()) {
+            delay(intervalSeconds * 1000L)
+            nextPhoto()
+        }
+    }
+
+    BackHandler(onBack = onBack)
+
+    if (photos.isEmpty()) {
+        Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            Text("No photos available for slideshow", color = Color.White)
+        }
+    } else {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            PhotoViewer(
+                uri = photos[currentIndex].uri,
+                index = currentIndex,
+                total = photos.size,
+                onBack = onBack,
+                showHeader = false,
+                showActions = false,
+                onIndexChange = { next -> if (next in photos.indices) currentIndex = next }
+            )
+            Column(
+                Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                    .background(Color(0x99000000))
+                    .statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("‹", color = Color.White, fontSize = 32.sp,
+                        modifier = Modifier.clickable(onClick = onBack))
+                    Spacer(Modifier.width(14.dp))
+                    Text("Slideshow  ${currentIndex + 1}/${photos.size}",
+                        color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            Column(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .background(Color(0xEE17181D))
+                    .navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        enabled = currentIndex > 0 || repeat || shuffle,
+                        onClick = { currentIndex = if (currentIndex > 0) currentIndex - 1 else photos.lastIndex }
+                    ) { Text("Previous", color = Color.White) }
+                    Button(onClick = { isPlaying = !isPlaying }) {
+                        Text(if (isPlaying) "Pause" else "Play")
+                    }
+                    TextButton(
+                        enabled = currentIndex < photos.lastIndex || repeat || shuffle,
+                        onClick = { nextPhoto() }
+                    ) { Text("Next", color = Color.White) }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = {
+                        intervalSeconds = when (intervalSeconds) { 3 -> 5; 5 -> 10; else -> 3 }
+                    }) { Text("${intervalSeconds}s", color = Color.White) }
+                    TextButton(onClick = { shuffle = !shuffle }) {
+                        Text(if (shuffle) "Shuffle ON" else "Shuffle OFF", color = Color.White)
+                    }
+                    TextButton(onClick = { repeat = !repeat }) {
+                        Text(if (repeat) "Repeat ON" else "Repeat OFF", color = Color.White)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun PhotoViewer(
     uri: Uri,
     index: Int,
@@ -1643,7 +1784,8 @@ private fun PhotoViewer(
     showActions: Boolean = true,
     onIndexChange: (Int) -> Unit = {},
     onEditClick: (() -> Unit)? = null,
-    onCropClick: (() -> Unit)? = null
+    onCropClick: (() -> Unit)? = null,
+    onSlideshowClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -1829,6 +1971,18 @@ private fun PhotoViewer(
                     ) {
                         Text("✎", color = Color.White, fontSize = 22.sp)
                         Text("Edit", color = Color.White, fontSize = 11.sp)
+                    }
+                }
+                if (onSlideshowClick != null) {
+                    Column(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onSlideshowClick)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("▶", color = Color.White, fontSize = 22.sp)
+                        Text("Slideshow", color = Color.White, fontSize = 11.sp)
                     }
                 }
                 Column(
