@@ -1839,6 +1839,7 @@ private data class GalleryTextLayer(
     val colorMode: String = "Single",
     val letterColors: Map<Int, Int> = emptyMap(),
     val lineColors: Map<Int, Int> = emptyMap(),
+    val x: Float = 0.5f,
     val y: Float = 0.72f,
     val startMs: Long = 0L,
     val endMs: Long = Long.MAX_VALUE,
@@ -1867,7 +1868,7 @@ private fun buildGalleryPreviewText(layer: GalleryTextLayer): androidx.compose.u
             when (layer.colorMode) {
                 "Letters" -> line.forEach { character ->
                     val characterColor = layer.letterColors[globalCharIndex]
-                        ?: galleryTextPalette[globalCharIndex % galleryTextPalette.size]
+                        ?: layer.color
                     withStyle(androidx.compose.ui.text.SpanStyle(color = Color(characterColor))) {
                         append(character)
                     }
@@ -1875,7 +1876,7 @@ private fun buildGalleryPreviewText(layer: GalleryTextLayer): androidx.compose.u
                 }
                 "Lines" -> {
                     val lineColor = layer.lineColors[lineIndex]
-                        ?: galleryTextPalette[lineIndex % galleryTextPalette.size]
+                        ?: layer.color
                     withStyle(androidx.compose.ui.text.SpanStyle(color = Color(lineColor))) { append(line) }
                     globalCharIndex += line.length + 1
                 }
@@ -1908,6 +1909,7 @@ private fun drawGalleryTextLayer(
     }
     val lines = layer.text.split("\n")
     val lineHeight = paint.textSize * 1.22f
+    val centerX = (width * layer.x).coerceIn(0f, width.toFloat())
     val centerY = (height * layer.y).coerceIn(lineHeight, height - lineHeight)
     val firstBaseline = centerY - (lines.size - 1) * lineHeight / 2f
 
@@ -1916,12 +1918,12 @@ private fun drawGalleryTextLayer(
         val baseline = firstBaseline + lineIndex * lineHeight
         val lineWidth = paint.measureText(line)
         if (layer.colorMode == "Letters") {
-            var x = (width - lineWidth) / 2f
+            var x = centerX - lineWidth / 2f
             line.forEachIndexed { charIndex, character ->
                 val charText = character.toString()
                 val charWidth = paint.measureText(charText)
                 val charColor = layer.letterColors[globalCharIndex + charIndex]
-                    ?: galleryTextPalette[(globalCharIndex + charIndex) % galleryTextPalette.size]
+                    ?: layer.color
                 paint.shader = null
                 paint.color = charColor
                 if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
@@ -1939,7 +1941,7 @@ private fun drawGalleryTextLayer(
             }
         } else {
             val lineColor = if (layer.colorMode == "Lines") {
-                layer.lineColors[lineIndex] ?: galleryTextPalette[lineIndex % galleryTextPalette.size]
+                layer.lineColors[lineIndex] ?: layer.color
             } else layer.color
             paint.color = lineColor
             paint.shader = null
@@ -1956,11 +1958,11 @@ private fun drawGalleryTextLayer(
                 paint.style = android.graphics.Paint.Style.STROKE
                 paint.strokeWidth = (paint.textSize * 0.075f).coerceAtLeast(2f)
                 paint.color = android.graphics.Color.BLACK
-                canvas.drawText(line, (width - lineWidth) / 2f, baseline, paint)
+                canvas.drawText(line, centerX - lineWidth / 2f, baseline, paint)
                 paint.style = android.graphics.Paint.Style.FILL
                 paint.color = lineColor
             }
-            canvas.drawText(line, (width - lineWidth) / 2f, baseline, paint)
+            canvas.drawText(line, centerX - lineWidth / 2f, baseline, paint)
             paint.clearShadowLayer()
             paint.shader = null
             paint.style = android.graphics.Paint.Style.FILL
@@ -2276,8 +2278,11 @@ private fun TextStudioScreen(
             } else {
                 CircularProgressIndicator(color = Color.White)
             }
+            val previewWidthPx = with(LocalDensity.current) { maxWidth.toPx() }.coerceAtLeast(1f)
+            val previewHeightPx = with(LocalDensity.current) { maxHeight.toPx() }.coerceAtLeast(1f)
             layers.filter { it.text.isNotBlank() && (!media.isVideo || (previewPositionMs >= it.startMs && previewPositionMs <= it.endMs)) }
                 .forEach { layer ->
+                    var textLayout by remember(layer.id) { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
                     Text(
                         text = buildGalleryPreviewText(layer),
                         color = Color(layer.color),
@@ -2290,10 +2295,31 @@ private fun TextStudioScreen(
                             else -> androidx.compose.ui.text.font.FontFamily.SansSerif
                         },
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                            .align(Alignment.TopCenter)
-                            .offset(y = maxHeight * layer.y)
-                            .padding(horizontal = 10.dp),
+                        onTextLayout = { textLayout = it },
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .offset(x = maxWidth * (layer.x - 0.5f), y = maxHeight * (layer.y - 0.5f))
+                            .padding(horizontal = 10.dp)
+                            .pointerInput(layer.id, layer.text) {
+                                detectTapGestures { tap ->
+                                    selectedLayerId = layer.id
+                                    val index = textLayout?.getOffsetForPosition(tap)
+                                    if (index != null && index in layer.text.indices) selectedCharacterIndex = index
+                                }
+                            }
+                            .pointerInput(layer.id, previewWidthPx, previewHeightPx) {
+                                detectDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    selectedLayerId = layer.id
+                                    val dx = dragAmount.x / previewWidthPx
+                                    val dy = dragAmount.y / previewHeightPx
+                                    val index = layers.indexOfFirst { it.id == layer.id }
+                                    if (index >= 0) layers[index] = layers[index].copy(
+                                        x = (layers[index].x + dx).coerceIn(0f, 1f),
+                                        y = (layers[index].y + dy).coerceIn(0f, 1f)
+                                    )
+                                }
+                            },
                         style = androidx.compose.ui.text.TextStyle(
                             shadow = if (layer.shadow) androidx.compose.ui.graphics.Shadow(
                                 color = Color.Black,
@@ -2411,26 +2437,62 @@ private fun TextStudioScreen(
                 FilterChip(selected = current.shadow, onClick = { updateLayer { it.copy(shadow = !it.shadow) } }, label = { Text("Shadow") })
                 FilterChip(selected = current.outline, onClick = { updateLayer { it.copy(outline = !it.outline) } }, label = { Text("Outline") })
             }
-            Text("Position  ${((current.y * 100).toInt())}%", color = Color.White)
-            Slider(
-                value = current.y,
-                onValueChange = { value -> updateLayer { it.copy(y = value) } },
-                valueRange = 0.08f..0.92f
-            )
+            Text("Drag text on the preview to place it anywhere", color = Color.Gray, fontSize = 11.sp)
             if (media.isVideo) {
-                Text("Show text from  ${current.startMs / 1000}s", color = Color.White)
-                Slider(
-                    value = current.startMs.toFloat().coerceIn(0f, durationMs.toFloat()),
-                    onValueChange = { value -> updateLayer { it.copy(startMs = value.toLong().coerceAtMost(it.endMs)) } },
-                    valueRange = 0f..durationMs.coerceAtLeast(1000L).toFloat()
-                )
-                Text("Hide text after  ${current.endMs.coerceAtMost(durationMs) / 1000}s", color = Color.White)
-                Slider(
-                    value = current.endMs.toFloat().coerceIn(0f, durationMs.toFloat()),
-                    onValueChange = { value -> updateLayer { it.copy(endMs = value.toLong().coerceAtLeast(it.startMs)) } },
-                    valueRange = 0f..durationMs.coerceAtLeast(1000L).toFloat()
-                )
-                Text("Video duration: ${durationMs / 1000}s · Preview position: ${previewPositionMs / 1000}s", color = Color.Gray, fontSize = 11.sp)
+                val timelineDuration = durationMs.coerceAtLeast(1000L)
+                val clipStart = current.startMs.coerceIn(0L, timelineDuration)
+                val clipEnd = current.endMs.coerceAtMost(timelineDuration).coerceAtLeast(clipStart)
+                Text("Text timing", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Drag the clip to move it; drag either edge to trim", color = Color.Gray, fontSize = 11.sp)
+                Canvas(
+                    Modifier.fillMaxWidth().height(58.dp)
+                        .pointerInput(current.id, timelineDuration) {
+                            var mode = "move"
+                            var initialStart = 0L
+                            var initialEnd = 0L
+                            var accumulated = 0f
+                            detectDragGestures(
+                                onDragStart = { point ->
+                                    val leftPx = size.width * (clipStart.toFloat() / timelineDuration)
+                                    val rightPx = size.width * (clipEnd.toFloat() / timelineDuration)
+                                    mode = when {
+                                        kotlin.math.abs(point.x - leftPx) <= 28.dp.toPx() -> "left"
+                                        kotlin.math.abs(point.x - rightPx) <= 28.dp.toPx() -> "right"
+                                        else -> "move"
+                                    }
+                                    initialStart = clipStart
+                                    initialEnd = clipEnd
+                                    accumulated = 0f
+                                    selectedLayerId = current.id
+                                },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    accumulated += amount.x
+                                    val delta = (accumulated / size.width * timelineDuration).toLong()
+                                    when (mode) {
+                                        "left" -> updateLayer { it.copy(startMs = (initialStart + delta).coerceIn(0L, initialEnd)) }
+                                        "right" -> updateLayer { it.copy(endMs = (initialEnd + delta).coerceIn(initialStart, timelineDuration)) }
+                                        else -> {
+                                            val length = initialEnd - initialStart
+                                            val newStart = (initialStart + delta).coerceIn(0L, timelineDuration - length)
+                                            updateLayer { it.copy(startMs = newStart, endMs = newStart + length) }
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                ) {
+                    val y = size.height / 2f
+                    val left = size.width * (clipStart.toFloat() / timelineDuration)
+                    val right = size.width * (clipEnd.toFloat() / timelineDuration)
+                    drawLine(Color(0xFF555A64), Offset(0f, y), Offset(size.width, y), strokeWidth = 9.dp.toPx())
+                    drawRoundRect(Color(0xFFDFAC42), topLeft = Offset(left, y - 9.dp.toPx()), size = androidx.compose.ui.geometry.Size((right - left).coerceAtLeast(4f), 18.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()))
+                    drawRoundRect(Color.White, topLeft = Offset(left - 5.dp.toPx(), y - 16.dp.toPx()), size = androidx.compose.ui.geometry.Size(10.dp.toPx(), 32.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()))
+                    drawRoundRect(Color.White, topLeft = Offset(right - 5.dp.toPx(), y - 16.dp.toPx()), size = androidx.compose.ui.geometry.Size(10.dp.toPx(), 32.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()))
+                    val playX = size.width * (previewPositionMs.coerceIn(0L, timelineDuration).toFloat() / timelineDuration)
+                    drawLine(Color(0xFF55C8FF), Offset(playX, 0f), Offset(playX, size.height), strokeWidth = 2.dp.toPx())
+                }
+                Text("${clipStart / 1000}s  —  ${clipEnd / 1000}s   •   Video ${timelineDuration / 1000}s", color = Color.Gray, fontSize = 11.sp)
             }
             Text("Font Family", color = Color.White, fontWeight = FontWeight.SemiBold)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
