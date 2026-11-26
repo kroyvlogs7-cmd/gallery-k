@@ -71,6 +71,15 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.CanvasOverlay
+import androidx.media3.effect.OverlayEffect
+import androidx.media3.transformer.Composition
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.Effects
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.Transformer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -405,6 +414,9 @@ var selectedPreviewIndex by remember { mutableIntStateOf(-1) }
 var slideshowActive by remember { mutableStateOf(false) }
 var slideshowMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
 var slideshowStartIndex by remember { mutableIntStateOf(0) }
+var textStudioMedia by remember { mutableStateOf<GalleryMedia?>(null) }
+var textPickerOpen by remember { mutableStateOf(false) }
+var textPickerMedia by remember { mutableStateOf(listOf<GalleryMedia>()) }
 var refreshKey by remember { mutableIntStateOf(0) }  
 var privacyFolderScreen by remember { mutableStateOf(false) }
 var showExitPrivacyDialog by remember { mutableStateOf(false) }
@@ -516,7 +528,7 @@ fun requestDelete() {
 }  
 
 BackHandler(  
-    enabled = privacyFolderScreen || recentlyDeletedScreen || slideshowActive || cropScreenOpen || photoEditorOpen || selectedPreviewMedia.isNotEmpty() || selectionMode ||
+    enabled = privacyFolderScreen || recentlyDeletedScreen || slideshowActive || textPickerOpen || textStudioMedia != null || cropScreenOpen || photoEditorOpen || selectedPreviewMedia.isNotEmpty() || selectionMode ||
         selectedIndex >= 0 ||  
         selectedAlbumId != null ||  
         selectedTab != "Photos"  
@@ -525,6 +537,8 @@ BackHandler(
         // Back from the Change PIN screen should return to the unlocked Privacy Folder,
         // not trigger the folder's Exit Privacy confirmation.
         recentlyDeletedScreen -> { recentlyDeletedScreen = false }
+        textStudioMedia != null -> { textStudioMedia = null }
+        textPickerOpen -> { textPickerOpen = false; textPickerMedia = emptyList() }
         slideshowActive -> { slideshowActive = false }
         privacyFolderScreen && privacyPinChanging -> {
             privacyPinChanging = false
@@ -571,6 +585,27 @@ MaterialTheme {
                     onFingerprintEnabledChange = { enabled -> fingerprintEnabled = enabled; pinPrefs.edit().putBoolean("fingerprint_enabled", enabled).apply() }
                 )
             }
+        }
+        else if (textPickerOpen) {
+            TextMediaPickerScreen(
+                media = textPickerMedia,
+                onBack = { textPickerOpen = false; textPickerMedia = emptyList() },
+                onSelect = { item ->
+                    textStudioMedia = item
+                    textPickerOpen = false
+                    textPickerMedia = emptyList()
+                }
+            )
+        }
+        else if (textStudioMedia != null) {
+            TextStudioScreen(
+                media = textStudioMedia!!,
+                onBack = { textStudioMedia = null },
+                onSaved = {
+                    textStudioMedia = null
+                    refreshKey++
+                }
+            )
         }
         else if (slideshowActive) {
             SlideshowScreen(
@@ -643,9 +678,10 @@ MaterialTheme {
             val current = displayedMedia[selectedIndex]  
 
             if (current.isVideo) {  
-                VideoPlayer(  
-                    uri = current.uri,  
-                    onBack = { selectedIndex = -1 }  
+                VideoPlayer(
+                    uri = current.uri,
+                    onBack = { selectedIndex = -1 },
+                    onTextClick = { textStudioMedia = current }
                 )  
             } else {  
                 PhotoViewer(  
@@ -656,6 +692,7 @@ MaterialTheme {
                     onIndexChange = { selectedIndex = it },
                     onEditClick = { photoEditorOpen = true },
                     onCropClick = { cropScreenOpen = true },
+                    onTextClick = { textStudioMedia = current },
                     onSlideshowClick = {
                         val photos = displayedMedia.filter { !it.isVideo }
                         slideshowMedia = photos
@@ -835,14 +872,19 @@ MaterialTheme {
                     selectedTab == "Albums" &&  
                         selectedAlbumId == null -> {  
 
-                        Text(  
-                            "${albums.size} Albums",  
-                            color = Color.LightGray,  
-                            modifier = Modifier.padding(  
-                                start = 20.dp,  
-                                bottom = 10.dp  
-                            )  
-                        )  
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("${albums.size} Albums", color = Color.LightGray, modifier = Modifier.weight(1f))
+                            TextButton(
+                                enabled = allMedia.isNotEmpty(),
+                                onClick = {
+                                    textPickerMedia = allMedia
+                                    textPickerOpen = true
+                                }
+                            ) { Text("T  Text Studio", color = Color.White) }
+                        }  
 
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(2),
@@ -880,8 +922,16 @@ MaterialTheme {
                         if (selectedTab == "Albums" && selectedAlbumId != null) {
                             Row(
                                 Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                                horizontalArrangement = Arrangement.End
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                TextButton(
+                                    enabled = displayedMedia.isNotEmpty(),
+                                    onClick = {
+                                        textPickerMedia = displayedMedia
+                                        textPickerOpen = true
+                                    }
+                                ) { Text("T  Text", color = Color.White) }
                                 TextButton(
                                     enabled = displayedMedia.any { !it.isVideo },
                                     onClick = {
@@ -890,9 +940,7 @@ MaterialTheme {
                                         slideshowStartIndex = 0
                                         slideshowActive = photosForSlideshow.isNotEmpty()
                                     }
-                                ) {
-                                    Text("▶ Slideshow", color = Color.White)
-                                }
+                                ) { Text("▶ Slideshow", color = Color.White) }
                             }
                         }
                         Text(  
@@ -1774,6 +1822,594 @@ private fun SlideshowScreen(
     }
 }
 
+
+private data class GalleryTextLayer(
+    val id: Int,
+    val text: String,
+    val color: Int = android.graphics.Color.WHITE,
+    val fontSize: Float = 34f,
+    val bold: Boolean = true,
+    val italic: Boolean = false,
+    val shadow: Boolean = true,
+    val outline: Boolean = false,
+    val colorMode: String = "Single",
+    val letterColors: Map<Int, Int> = emptyMap(),
+    val lineColors: Map<Int, Int> = emptyMap(),
+    val y: Float = 0.72f,
+    val startMs: Long = 0L,
+    val endMs: Long = Long.MAX_VALUE,
+    val fontFamily: String = "sans-serif"
+)
+
+private val galleryTextPalette = listOf(
+    android.graphics.Color.WHITE,
+    android.graphics.Color.RED,
+    android.graphics.Color.YELLOW,
+    android.graphics.Color.GREEN,
+    android.graphics.Color.CYAN,
+    android.graphics.Color.BLUE,
+    android.graphics.Color.MAGENTA,
+    android.graphics.Color.rgb(255, 145, 0)
+)
+
+private fun buildGalleryPreviewText(layer: GalleryTextLayer): androidx.compose.ui.text.AnnotatedString =
+    androidx.compose.ui.text.buildAnnotatedString {
+        var globalCharIndex = 0
+        layer.text.split("\\n").forEachIndexed { lineIndex, line ->
+            if (lineIndex > 0) {
+                append("\\n")
+                globalCharIndex++
+            }
+            when (layer.colorMode) {
+                "Letters" -> line.forEach { character ->
+                    val characterColor = layer.letterColors[globalCharIndex]
+                        ?: galleryTextPalette[globalCharIndex % galleryTextPalette.size]
+                    withStyle(androidx.compose.ui.text.SpanStyle(color = Color(characterColor))) {
+                        append(character)
+                    }
+                    globalCharIndex++
+                }
+                "Lines" -> {
+                    val lineColor = layer.lineColors[lineIndex]
+                        ?: galleryTextPalette[lineIndex % galleryTextPalette.size]
+                    withStyle(androidx.compose.ui.text.SpanStyle(color = Color(lineColor))) { append(line) }
+                    globalCharIndex += line.length + 1
+                }
+                else -> {
+                    withStyle(androidx.compose.ui.text.SpanStyle(color = Color(layer.color))) { append(line) }
+                    globalCharIndex += line.length + 1
+                }
+            }
+        }
+    }
+
+private fun drawGalleryTextLayer(
+    canvas: android.graphics.Canvas,
+    layer: GalleryTextLayer,
+    width: Int,
+    height: Int,
+    timeMs: Long,
+    useTiming: Boolean
+) {
+    if (layer.text.isBlank()) return
+    if (useTiming && (timeMs < layer.startMs || timeMs > layer.endMs)) return
+
+    val style = (if (layer.bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL) or
+        (if (layer.italic) android.graphics.Typeface.ITALIC else 0)
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = (width * layer.fontSize / 420f).coerceAtLeast(18f)
+        textAlign = android.graphics.Paint.Align.LEFT
+        typeface = android.graphics.Typeface.create(layer.fontFamily, style)
+        color = layer.color
+    }
+    val lines = layer.text.split("\n")
+    val lineHeight = paint.textSize * 1.22f
+    val centerY = (height * layer.y).coerceIn(lineHeight, height - lineHeight)
+    val firstBaseline = centerY - (lines.size - 1) * lineHeight / 2f
+
+    var globalCharIndex = 0
+    lines.forEachIndexed { lineIndex, line ->
+        val baseline = firstBaseline + lineIndex * lineHeight
+        val lineWidth = paint.measureText(line)
+        if (layer.colorMode == "Letters") {
+            var x = (width - lineWidth) / 2f
+            line.forEachIndexed { charIndex, character ->
+                val charText = character.toString()
+                val charWidth = paint.measureText(charText)
+                val charColor = layer.letterColors[globalCharIndex + charIndex]
+                    ?: galleryTextPalette[(globalCharIndex + charIndex) % galleryTextPalette.size]
+                paint.shader = null
+                paint.color = charColor
+                if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
+                if (layer.outline) {
+                    paint.style = android.graphics.Paint.Style.STROKE
+                    paint.strokeWidth = (paint.textSize * 0.075f).coerceAtLeast(2f)
+                    paint.color = android.graphics.Color.BLACK
+                    canvas.drawText(charText, x, baseline, paint)
+                    paint.style = android.graphics.Paint.Style.FILL
+                    paint.color = charColor
+                }
+                canvas.drawText(charText, x, baseline, paint)
+                paint.clearShadowLayer()
+                x += charWidth
+            }
+        } else {
+            val lineColor = if (layer.colorMode == "Lines") {
+                layer.lineColors[lineIndex] ?: galleryTextPalette[lineIndex % galleryTextPalette.size]
+            } else layer.color
+            paint.color = lineColor
+            paint.shader = null
+            if (layer.colorMode == "Gradient" && line.isNotEmpty()) {
+                paint.shader = android.graphics.LinearGradient(
+                    0f, baseline - paint.textSize, width.toFloat(), baseline,
+                    intArrayOf(android.graphics.Color.RED, android.graphics.Color.YELLOW, android.graphics.Color.CYAN, android.graphics.Color.MAGENTA),
+                    null,
+                    android.graphics.Shader.TileMode.CLAMP
+                )
+            }
+            if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
+            if (layer.outline) {
+                paint.style = android.graphics.Paint.Style.STROKE
+                paint.strokeWidth = (paint.textSize * 0.075f).coerceAtLeast(2f)
+                paint.color = android.graphics.Color.BLACK
+                canvas.drawText(line, (width - lineWidth) / 2f, baseline, paint)
+                paint.style = android.graphics.Paint.Style.FILL
+                paint.color = lineColor
+            }
+            canvas.drawText(line, (width - lineWidth) / 2f, baseline, paint)
+            paint.clearShadowLayer()
+            paint.shader = null
+            paint.style = android.graphics.Paint.Style.FILL
+        }
+        globalCharIndex += line.length + 1
+    }
+}
+
+@OptIn(UnstableApi::class)
+private class GalleryTimedTextOverlay(
+    private val layers: List<GalleryTextLayer>
+) : CanvasOverlay(true) {
+    override fun onDraw(canvas: android.graphics.Canvas, presentationTimeUs: Long) {
+        val timeMs = presentationTimeUs / 1000L
+        layers.forEach { layer ->
+            drawGalleryTextLayer(canvas, layer, canvas.width, canvas.height, timeMs, true)
+        }
+    }
+}
+
+@Composable
+private fun TextMediaPickerScreen(
+    media: List<GalleryMedia>,
+    onBack: () -> Unit,
+    onSelect: (GalleryMedia) -> Unit
+) {
+    Column(Modifier.fillMaxSize().background(Color(0xFF101114))) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("‹", color = Color.White, fontSize = 32.sp, modifier = Modifier.clickable(onClick = onBack))
+            Spacer(Modifier.width(12.dp))
+            Text("Choose Photo or Video", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Select a file to open Text Studio", color = Color.Gray, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        LazyVerticalGrid(columns = GridCells.Fixed(3), contentPadding = PaddingValues(3.dp)) {
+            items(media, key = { it.uri.toString() }) { item ->
+                MediaThumbnail(
+                    media = item,
+                    selected = false,
+                    onClick = { onSelect(item) },
+                    onLongClick = { onSelect(item) }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(UnstableApi::class)
+@Composable
+private fun TextStudioScreen(
+    media: GalleryMedia,
+    onBack: () -> Unit,
+    onSaved: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val layers = remember(media.uri) {
+        mutableStateListOf(GalleryTextLayer(id = 1, text = "Your Text"))
+    }
+    var selectedLayerId by remember(media.uri) { mutableIntStateOf(1) }
+    var nextLayerId by remember(media.uri) { mutableIntStateOf(2) }
+    var selectedCharacterIndex by remember(media.uri) { mutableIntStateOf(0) }
+    var selectedLineIndex by remember(media.uri) { mutableIntStateOf(0) }
+    var exporting by remember { mutableStateOf(false) }
+    var durationMs by remember(media.uri) { mutableLongStateOf(media.duration.coerceAtLeast(1000L)) }
+    var previewPositionMs by remember(media.uri) { mutableLongStateOf(0L) }
+    var previewBitmap by remember(media.uri) { mutableStateOf<Bitmap?>(null) }
+    val player = remember(media.uri, media.isVideo) {
+        if (media.isVideo) ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(media.uri))
+            prepare()
+            playWhenReady = false
+        } else null
+    }
+    val selectedIndex = layers.indexOfFirst { it.id == selectedLayerId }.coerceAtLeast(0)
+    val current = layers.getOrNull(selectedIndex) ?: layers.first()
+    fun updateLayer(transform: (GalleryTextLayer) -> GalleryTextLayer) {
+        val index = layers.indexOfFirst { it.id == selectedLayerId }
+        if (index >= 0) layers[index] = transform(layers[index])
+    }
+
+    LaunchedEffect(media.uri) {
+        if (media.isVideo) {
+            val retriever = android.media.MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(context, media.uri)
+                durationMs = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull()?.coerceAtLeast(1000L) ?: durationMs
+                previewBitmap = retriever.getFrameAtTime(0L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            } catch (_: Exception) {
+            } finally {
+                try { retriever.release() } catch (_: Exception) {}
+            }
+        } else {
+            previewBitmap = withContext(Dispatchers.IO) {
+                try { context.contentResolver.openInputStream(media.uri)?.use { android.graphics.BitmapFactory.decodeStream(it) } }
+                catch (_: Exception) { null }
+            }
+        }
+    }
+
+    LaunchedEffect(player) {
+        if (player != null) {
+            while (true) {
+                previewPositionMs = player.currentPosition.coerceAtLeast(0L)
+                delay(120L)
+            }
+        }
+    }
+    DisposableEffect(player) {
+        onDispose { player?.release() }
+    }
+    BackHandler(onBack = onBack)
+
+    Column(Modifier.fillMaxSize().background(Color(0xFF101114))) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("‹", color = Color.White, fontSize = 32.sp, modifier = Modifier.clickable(onClick = onBack))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Text Studio", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(if (media.isVideo) "Video Text Editor" else "Photo Text Editor", color = Color.Gray, fontSize = 11.sp)
+            }
+            Text(
+                if (exporting) "Exporting…" else "Save",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(18.dp))
+                    .background(if (exporting) Color.DarkGray else Color(0xFF315C91))
+                    .clickable(enabled = !exporting && layers.any { it.text.isNotBlank() }) {
+                        exporting = true
+                        val exportLayers = layers.toList()
+                        scope.launch {
+                            if (!media.isVideo) {
+                                val saved = withContext(Dispatchers.IO) {
+                                    var source: Bitmap? = null
+                                    var output: Bitmap? = null
+                                    var target: Uri? = null
+                                    try {
+                                        source = context.contentResolver.openInputStream(media.uri)?.use {
+                                            android.graphics.BitmapFactory.decodeStream(it)
+                                        } ?: return@withContext false
+                                        output = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+                                        val canvas = android.graphics.Canvas(output)
+                                        canvas.drawBitmap(source, 0f, 0f, null)
+                                        exportLayers.forEach { layer ->
+                                            drawGalleryTextLayer(canvas, layer, output.width, output.height, 0L, false)
+                                        }
+                                        val values = ContentValues().apply {
+                                            put(MediaStore.Images.Media.DISPLAY_NAME, "GalleryK_Text_${System.currentTimeMillis()}.jpg")
+                                            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Gallery K")
+                                                put(MediaStore.Images.Media.IS_PENDING, 1)
+                                            }
+                                        }
+                                        target = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                                            ?: return@withContext false
+                                        val wrote = context.contentResolver.openOutputStream(target!!)?.use {
+                                            output.compress(Bitmap.CompressFormat.JPEG, 95, it)
+                                        } ?: false
+                                        if (!wrote) {
+                                            context.contentResolver.delete(target!!, null, null)
+                                            return@withContext false
+                                        }
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                            val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                                            context.contentResolver.update(target!!, ready, null, null)
+                                        }
+                                        true
+                                    } catch (_: Exception) {
+                                        target?.let { try { context.contentResolver.delete(it, null, null) } catch (_: Exception) {} }
+                                        false
+                                    } finally {
+                                        source?.recycle()
+                                        output?.recycle()
+                                    }
+                                }
+                                exporting = false
+                                if (saved) {
+                                    Toast.makeText(context, "Text photo saved in Gallery K", Toast.LENGTH_SHORT).show()
+                                    onSaved()
+                                } else Toast.makeText(context, "Could not save photo", Toast.LENGTH_LONG).show()
+                            } else {
+                                val outputFile = File(context.cacheDir, "galleryk_text_${System.currentTimeMillis()}.mp4")
+                                try {
+                                    val overlay = GalleryTimedTextOverlay(exportLayers)
+                                    val editedItem = EditedMediaItem.Builder(MediaItem.fromUri(media.uri))
+                                        .setEffects(Effects(emptyList(), listOf(OverlayEffect(listOf(overlay)))))
+                                        .build()
+                                    val transformer = Transformer.Builder(context)
+                                        .addListener(object : Transformer.Listener {
+                                            override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                                                scope.launch {
+                                                    val saved = withContext(Dispatchers.IO) {
+                                                        var target: Uri? = null
+                                                        try {
+                                                            val values = ContentValues().apply {
+                                                                put(MediaStore.Video.Media.DISPLAY_NAME, "GalleryK_Text_${System.currentTimeMillis()}.mp4")
+                                                                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                                                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                                    put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/Gallery K")
+                                                                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                                                                }
+                                                            }
+                                                            target = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                                                                ?: return@withContext false
+                                                            context.contentResolver.openOutputStream(target!!)?.use { output ->
+                                                                outputFile.inputStream().use { input -> input.copyTo(output) }
+                                                            } ?: return@withContext false
+                                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                                val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                                                                context.contentResolver.update(target!!, ready, null, null)
+                                                            }
+                                                            true
+                                                        } catch (_: Exception) {
+                                                            target?.let { try { context.contentResolver.delete(it, null, null) } catch (_: Exception) {} }
+                                                            false
+                                                        } finally { outputFile.delete() }
+                                                    }
+                                                    exporting = false
+                                                    if (saved) {
+                                                        Toast.makeText(context, "Text video exported to Movies/Gallery K", Toast.LENGTH_LONG).show()
+                                                        onSaved()
+                                                    } else Toast.makeText(context, "Video export finished but saving failed", Toast.LENGTH_LONG).show()
+                                                }
+                                            }
+
+                                            override fun onError(
+                                                composition: Composition,
+                                                exportResult: ExportResult,
+                                                exportException: ExportException
+                                            ) {
+                                                outputFile.delete()
+                                                exporting = false
+                                                Toast.makeText(context, "Video export failed: ${exportException.message}", Toast.LENGTH_LONG).show()
+                                            }
+                                        })
+                                        .build()
+                                    transformer.start(editedItem, outputFile.absolutePath)
+                                } catch (error: Exception) {
+                                    outputFile.delete()
+                                    exporting = false
+                                    Toast.makeText(context, "Could not start video export: ${error.message}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }
+                    .padding(horizontal = 18.dp, vertical = 9.dp)
+            ) { Text(if (exporting) "Exporting…" else "Save", color = Color.White) }
+        }
+
+        BoxWithConstraints(
+            Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp)
+                .clip(RoundedCornerShape(14.dp)).background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            if (media.isVideo && player != null) {
+                AndroidView(
+                    factory = { viewContext ->
+                        PlayerView(viewContext).apply {
+                            this.player = player
+                            useController = true
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        }
+                    },
+                    update = { it.player = player },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else if (previewBitmap != null) {
+                Image(
+                    bitmap = previewBitmap!!.asImageBitmap(),
+                    contentDescription = "Text editor photo preview",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit
+                )
+            } else {
+                CircularProgressIndicator(color = Color.White)
+            }
+            layers.filter { it.text.isNotBlank() && (!media.isVideo || (previewPositionMs >= it.startMs && previewPositionMs <= it.endMs)) }
+                .forEach { layer ->
+                    Text(
+                        text = buildGalleryPreviewText(layer),
+                        color = Color(layer.color),
+                        fontSize = layer.fontSize.sp,
+                        fontWeight = if (layer.bold) FontWeight.Bold else FontWeight.Normal,
+                        fontStyle = if (layer.italic) androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal,
+                        fontFamily = when (layer.fontFamily) {
+                            "serif" -> androidx.compose.ui.text.font.FontFamily.Serif
+                            "monospace" -> androidx.compose.ui.text.font.FontFamily.Monospace
+                            else -> androidx.compose.ui.text.font.FontFamily.SansSerif
+                        },
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .offset(y = maxHeight * layer.y)
+                            .padding(horizontal = 10.dp),
+                        style = androidx.compose.ui.text.TextStyle(
+                            shadow = if (layer.shadow) androidx.compose.ui.graphics.Shadow(
+                                color = Color.Black,
+                                offset = androidx.compose.ui.geometry.Offset(2f, 3f),
+                                blurRadius = 5f
+                            ) else null
+                        )
+                    )
+                }
+        }
+
+        Column(
+            Modifier.fillMaxWidth().weight(1.08f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Text Layers", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    val id = nextLayerId++
+                    layers.add(GalleryTextLayer(id = id, text = "New Text", y = 0.55f))
+                    selectedLayerId = id
+                }) { Text("+ Add Text", color = Color(0xFF8CB9FF)) }
+                TextButton(
+                    enabled = layers.size > 1,
+                    onClick = {
+                        layers.removeAll { it.id == selectedLayerId }
+                        selectedLayerId = layers.first().id
+                    }
+                ) { Text("Delete", color = Color(0xFFFF8A8A)) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                layers.forEach { layer ->
+                    FilterChip(
+                        selected = layer.id == selectedLayerId,
+                        onClick = { selectedLayerId = layer.id },
+                        label = { Text(layer.text.ifBlank { "Text" }.take(10), maxLines = 1) }
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = current.text,
+                onValueChange = { value -> updateLayer { it.copy(text = value) } },
+                label = { Text("Write your text") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 1,
+                maxLines = 3
+            )
+            Text("Text Color", color = Color.White, fontWeight = FontWeight.SemiBold)
+            if (current.colorMode == "Letters" && current.text.isNotEmpty()) {
+                Text("Choose a letter, then assign its color", color = Color.Gray, fontSize = 11.sp)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    current.text.indices.filter { !current.text[it].isWhitespace() }.forEach { charIndex ->
+                        FilterChip(
+                            selected = selectedCharacterIndex == charIndex,
+                            onClick = { selectedCharacterIndex = charIndex },
+                            label = { Text(current.text[charIndex].toString()) }
+                        )
+                    }
+                }
+            }
+            if (current.colorMode == "Lines") {
+                Text("Choose a line, then assign its color", color = Color.Gray, fontSize = 11.sp)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    current.text.split("\\n").indices.forEach { lineIndex ->
+                        FilterChip(
+                            selected = selectedLineIndex == lineIndex,
+                            onClick = { selectedLineIndex = lineIndex },
+                            label = { Text("Line ${lineIndex + 1}") }
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                galleryTextPalette.forEach { color ->
+                    Box(
+                        Modifier.size(30.dp).clip(RoundedCornerShape(50))
+                            .background(Color(color))
+                            .clickable {
+                                when (current.colorMode) {
+                                    "Letters" -> {
+                                        if (selectedCharacterIndex in current.text.indices) {
+                                            updateLayer { it.copy(letterColors = it.letterColors + (selectedCharacterIndex to color)) }
+                                        }
+                                    }
+                                    "Lines" -> {
+                                        if (selectedLineIndex in current.text.split("\\n").indices) {
+                                            updateLayer { it.copy(lineColors = it.lineColors + (selectedLineIndex to color)) }
+                                        }
+                                    }
+                                    else -> updateLayer { it.copy(color = color) }
+                                }
+                            }
+                    )
+                }
+            }
+            Text("Color Filter", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("Single", "Letters", "Lines", "Gradient").forEach { mode ->
+                    FilterChip(
+                        selected = current.colorMode == mode,
+                        onClick = { updateLayer { it.copy(colorMode = mode) } },
+                        label = { Text(mode) }
+                    )
+                }
+            }
+            Text("Font Size  ${current.fontSize.toInt()}", color = Color.White)
+            Slider(
+                value = current.fontSize,
+                onValueChange = { size -> updateLayer { it.copy(fontSize = size) } },
+                valueRange = 16f..64f
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = current.bold, onClick = { updateLayer { it.copy(bold = !it.bold) } }, label = { Text("Bold") })
+                FilterChip(selected = current.italic, onClick = { updateLayer { it.copy(italic = !it.italic) } }, label = { Text("Italic") })
+                FilterChip(selected = current.shadow, onClick = { updateLayer { it.copy(shadow = !it.shadow) } }, label = { Text("Shadow") })
+                FilterChip(selected = current.outline, onClick = { updateLayer { it.copy(outline = !it.outline) } }, label = { Text("Outline") })
+            }
+            Text("Position  ${((current.y * 100).toInt())}%", color = Color.White)
+            Slider(
+                value = current.y,
+                onValueChange = { value -> updateLayer { it.copy(y = value) } },
+                valueRange = 0.08f..0.92f
+            )
+            if (media.isVideo) {
+                Text("Show text from  ${current.startMs / 1000}s", color = Color.White)
+                Slider(
+                    value = current.startMs.toFloat().coerceIn(0f, durationMs.toFloat()),
+                    onValueChange = { value -> updateLayer { it.copy(startMs = value.toLong().coerceAtMost(it.endMs)) } },
+                    valueRange = 0f..durationMs.coerceAtLeast(1000L).toFloat()
+                )
+                Text("Hide text after  ${current.endMs.coerceAtMost(durationMs) / 1000}s", color = Color.White)
+                Slider(
+                    value = current.endMs.toFloat().coerceIn(0f, durationMs.toFloat()),
+                    onValueChange = { value -> updateLayer { it.copy(endMs = value.toLong().coerceAtLeast(it.startMs)) } },
+                    valueRange = 0f..durationMs.coerceAtLeast(1000L).toFloat()
+                )
+                Text("Video duration: ${durationMs / 1000}s · Preview position: ${previewPositionMs / 1000}s", color = Color.Gray, fontSize = 11.sp)
+            }
+            Text("Font Family", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("sans-serif", "serif", "monospace").forEach { family ->
+                    FilterChip(
+                        selected = current.fontFamily == family,
+                        onClick = { updateLayer { it.copy(fontFamily = family) } },
+                        label = { Text(family.substringBefore('-').ifBlank { "Sans" }) }
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun PhotoViewer(
     uri: Uri,
@@ -1785,7 +2421,8 @@ private fun PhotoViewer(
     onIndexChange: (Int) -> Unit = {},
     onEditClick: (() -> Unit)? = null,
     onCropClick: (() -> Unit)? = null,
-    onSlideshowClick: (() -> Unit)? = null
+    onSlideshowClick: (() -> Unit)? = null,
+    onTextClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     var showDetailsDialog by remember(uri) { mutableStateOf(false) }
@@ -2020,6 +2657,18 @@ private fun PhotoViewer(
                     ) {
                         Text("⌗", color = Color.White, fontSize = 22.sp)
                         Text("Crop", color = Color.White, fontSize = 11.sp)
+                    }
+                }
+                if (onTextClick != null) {
+                    Column(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onTextClick)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("T", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("Text", color = Color.White, fontSize = 11.sp)
                     }
                 }
                 Column(
@@ -2570,7 +3219,8 @@ private fun PhotoEditorScreen(
 private fun VideoPlayer(
 uri: Uri,
 onBack: () -> Unit,
-enableSeekGestures: Boolean = true
+enableSeekGestures: Boolean = true,
+onTextClick: (() -> Unit)? = null
 ) {
 val context = LocalContext.current
 val activity = remember(context) {
@@ -2862,6 +3512,22 @@ Box(
 
     if (controlsVisible) {  
         Box(Modifier.fillMaxSize()) {  
+            if (onTextClick != null) {
+                Text(
+                    "T  Text",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(start = 16.dp, top = 14.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color(0x88000000))
+                        .clickable { onTextClick() }
+                        .padding(horizontal = 14.dp, vertical = 9.dp)
+                )
+            }
             Text(  
                 "⟳",  
                 color = Color.White,  
