@@ -29,6 +29,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
@@ -59,6 +60,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -1855,9 +1857,9 @@ private val galleryTextPalette = listOf(
 private fun buildGalleryPreviewText(layer: GalleryTextLayer): androidx.compose.ui.text.AnnotatedString =
     androidx.compose.ui.text.buildAnnotatedString {
         var globalCharIndex = 0
-        layer.text.split("\\n").forEachIndexed { lineIndex, line ->
+        layer.text.split("\n").forEachIndexed { lineIndex, line ->
             if (lineIndex > 0) {
-                append("\\n")
+                append("\n")
                 globalCharIndex++
             }
             when (layer.colorMode) {
@@ -2149,7 +2151,7 @@ private fun TextStudioScreen(
                                 try {
                                     val overlay = GalleryTimedTextOverlay(exportLayers)
                                     val editedItem = EditedMediaItem.Builder(MediaItem.fromUri(media.uri))
-                                        .setEffects(Effects(emptyList(), listOf(OverlayEffect(listOf(overlay)))))
+                                        .setEffects(Effects(emptyList(), listOf(OverlayEffect(mutableListOf(overlay)))))
                                         .build()
                                     val transformer = Transformer.Builder(context)
                                         .addListener(object : Transformer.Listener {
