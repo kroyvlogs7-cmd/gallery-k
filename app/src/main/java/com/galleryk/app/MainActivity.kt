@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.media.ThumbnailUtils
+import android.util.Size
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -75,6 +77,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import java.io.File
+import java.util.UUID
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class GalleryMedia(
 val uri: Uri,
@@ -82,7 +87,10 @@ val isVideo: Boolean,
 val duration: Long,
 val albumId: String,
 val albumName: String,
-val dateAdded: Long
+val dateAdded: Long,
+val relativePath: String = "",
+val displayName: String = "",
+val mimeType: String = ""
 )
 
 data class PhotoAlbum(
@@ -90,6 +98,155 @@ val id: String,
 val name: String,
 val media: List<GalleryMedia>
 )
+
+private const val RECENTLY_DELETED_PREFS = "gallery_k_recently_deleted"
+private const val RECENTLY_DELETED_KEY = "items_json"
+
+private fun loadRecentlyDeleted(context: android.content.Context): List<GalleryMedia> {
+    return try {
+        val raw = context.getSharedPreferences(RECENTLY_DELETED_PREFS, android.content.Context.MODE_PRIVATE)
+            .getString(RECENTLY_DELETED_KEY, "[]") ?: "[]"
+        val array = JSONArray(raw)
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val file = File(item.optString("filePath"))
+                if (!file.exists() || !file.isFile) continue
+                add(
+                    GalleryMedia(
+                        uri = Uri.fromFile(file),
+                        isVideo = item.optBoolean("isVideo"),
+                        duration = item.optLong("duration"),
+                        albumId = item.optString("albumId", "unknown"),
+                        albumName = item.optString("albumName", "Other"),
+                        dateAdded = item.optLong("dateAdded"),
+                        relativePath = item.optString("relativePath", ""),
+                        displayName = item.optString("displayName", file.name),
+                        mimeType = item.optString("mimeType", "")
+                    )
+                )
+            }
+        }.sortedByDescending { it.dateAdded }
+    } catch (_: Exception) {
+        emptyList()
+    }
+}
+
+private fun saveRecentlyDeleted(context: android.content.Context, items: List<GalleryMedia>) {
+    val array = JSONArray()
+    items.forEach { media ->
+        val filePath = media.uri.path ?: return@forEach
+        array.put(
+            JSONObject().apply {
+                put("filePath", filePath)
+                put("isVideo", media.isVideo)
+                put("duration", media.duration)
+                put("albumId", media.albumId)
+                put("albumName", media.albumName)
+                put("dateAdded", media.dateAdded)
+                put("relativePath", media.relativePath)
+                put("displayName", media.displayName)
+                put("mimeType", media.mimeType)
+            }
+        )
+    }
+    context.getSharedPreferences(RECENTLY_DELETED_PREFS, android.content.Context.MODE_PRIVATE)
+        .edit().putString(RECENTLY_DELETED_KEY, array.toString()).apply()
+}
+
+private suspend fun createRecentlyDeletedCopies(
+    context: android.content.Context,
+    mediaItems: List<GalleryMedia>
+): List<GalleryMedia> = withContext(Dispatchers.IO) {
+    val directory = File(context.filesDir, "RecentlyDeleted")
+    if (!directory.exists() && !directory.mkdirs()) {
+        throw IllegalStateException("Could not create Recently Deleted storage")
+    }
+    val created = mutableListOf<GalleryMedia>()
+    val createdFiles = mutableListOf<File>()
+    try {
+        mediaItems.forEach { media ->
+            val originalName = media.displayName.ifBlank {
+                "${if (media.isVideo) "video" else "photo"}_${System.currentTimeMillis()}"
+            }
+            val safeName = originalName.substringAfterLast('/').substringAfterLast('\\')
+            val hasExtension = safeName.substringAfterLast('.', "").isNotBlank()
+            val fallbackExtension = when (media.mimeType.lowercase()) {
+                "video/webm" -> "webm"
+                "video/3gpp" -> "3gp"
+                "video/x-matroska" -> "mkv"
+                "image/png" -> "png"
+                "image/webp" -> "webp"
+                "image/heic", "image/heif" -> "heic"
+                "image/gif" -> "gif"
+                else -> if (media.isVideo) "mp4" else "jpg"
+            }
+            val storedName = if (hasExtension) safeName else "$safeName.$fallbackExtension"
+            val target = File(directory, "${UUID.randomUUID()}_$storedName")
+            createdFiles.add(target)
+            context.contentResolver.openInputStream(media.uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            } ?: throw IllegalStateException("Could not read ${media.displayName}")
+            if (!target.exists() || target.length() == 0L) {
+                throw IllegalStateException("Backup copy was empty")
+            }
+            created.add(
+                media.copy(
+                    uri = Uri.fromFile(target),
+                    dateAdded = System.currentTimeMillis() / 1000L
+                )
+            )
+        }
+        created
+    } catch (error: Exception) {
+        createdFiles.forEach { it.delete() }
+        throw error
+    }
+}
+
+private suspend fun restoreRecentlyDeletedMedia(
+    context: android.content.Context,
+    media: GalleryMedia
+): Boolean = withContext(Dispatchers.IO) {
+    val sourceFile = media.uri.path?.let(::File) ?: return@withContext false
+    if (!sourceFile.exists()) return@withContext false
+    val collection = if (media.isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    val mime = media.mimeType.ifBlank {
+        if (media.isVideo) "video/mp4" else "image/jpeg"
+    }
+    val displayName = media.displayName.ifBlank { sourceFile.name.substringAfter('_', sourceFile.name) }
+    val fallbackPath = if (media.isVideo) "Movies" else "Pictures"
+    val values = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+        put(MediaStore.MediaColumns.MIME_TYPE, mime)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            put(MediaStore.MediaColumns.RELATIVE_PATH, media.relativePath.ifBlank { fallbackPath })
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+    }
+    val resolver = context.contentResolver
+    val restoredUri = try { resolver.insert(collection, values) } catch (_: Exception) { null }
+        ?: return@withContext false
+    try {
+        resolver.openOutputStream(restoredUri, "w")?.use { output ->
+            sourceFile.inputStream().use { input -> input.copyTo(output) }
+        } ?: throw IllegalStateException("Could not open restored file")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+            resolver.update(restoredUri, ready, null, null)
+        }
+        sourceFile.delete()
+        true
+    } catch (_: Exception) {
+        try { resolver.delete(restoredUri, null, null) } catch (_: Exception) { }
+        false
+    }
+}
+
+private fun permanentlyDeleteRecentlyDeleted(mediaItems: List<GalleryMedia>) {
+    mediaItems.forEach { media -> media.uri.path?.let { File(it).delete() } }
+}
 
 class MainActivity : ComponentActivity() {
 override fun onCreate(savedInstanceState: Bundle?) {
@@ -138,22 +295,16 @@ val allMedia = mutableListOf<GalleryMedia>()
             MediaStore.Images.ImageColumns.BUCKET_DISPLAY_NAME  
         val dateName = MediaStore.MediaColumns.DATE_ADDED  
 
-        val projection = if (isVideo) {  
-            arrayOf(  
-                idColumnName,  
-                bucketIdName,  
-                bucketNameName,  
-                dateName,  
-                MediaStore.Video.VideoColumns.DURATION  
-            )  
-        } else {  
-            arrayOf(  
-                idColumnName,  
-                bucketIdName,  
-                bucketNameName,  
-                dateName  
-            )  
-        }  
+        val baseProjection = mutableListOf(
+            idColumnName, bucketIdName, bucketNameName, dateName
+        )
+        if (isVideo) baseProjection.add(MediaStore.Video.VideoColumns.DURATION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            baseProjection.add(MediaStore.MediaColumns.RELATIVE_PATH)
+        }
+        baseProjection.add(MediaStore.MediaColumns.DISPLAY_NAME)
+        baseProjection.add(MediaStore.MediaColumns.MIME_TYPE)
+        val projection = baseProjection.toTypedArray()
 
         context.contentResolver.query(  
             collection,  
@@ -171,11 +322,13 @@ val allMedia = mutableListOf<GalleryMedia>()
             val dateIndex =  
                 cursor.getColumnIndexOrThrow(dateName)  
 
-            val durationIndex = if (isVideo) {  
-                cursor.getColumnIndexOrThrow(  
-                    MediaStore.Video.VideoColumns.DURATION  
-                )  
-            } else -1  
+            val durationIndex = if (isVideo) cursor.getColumnIndexOrThrow(
+                MediaStore.Video.VideoColumns.DURATION
+            ) else -1
+            val relativePathIndex = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH) else -1
+            val displayNameIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+            val mimeTypeIndex = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
 
             while (cursor.moveToNext()) {  
                 val id = cursor.getLong(idIndex)  
@@ -186,20 +339,17 @@ val allMedia = mutableListOf<GalleryMedia>()
                     cursor.getString(bucketNameIndex) ?: "Other"  
                 val dateAdded = cursor.getLong(dateIndex)  
 
-                val duration = if (isVideo) {  
-                    cursor.getLong(durationIndex)  
-                } else 0L  
+                val duration = if (isVideo) cursor.getLong(durationIndex) else 0L
+                val relativePath = if (relativePathIndex >= 0) cursor.getString(relativePathIndex) ?: "" else ""
+                val displayName = if (displayNameIndex >= 0) cursor.getString(displayNameIndex) ?: "" else ""
+                val mimeType = if (mimeTypeIndex >= 0) cursor.getString(mimeTypeIndex) ?: "" else ""
 
-                allMedia.add(  
-                    GalleryMedia(  
-                        uri,  
-                        isVideo,  
-                        duration,  
-                        bucketId,  
-                        bucketName,  
-                        dateAdded  
-                    )  
-                )  
+                allMedia.add(
+                    GalleryMedia(
+                        uri, isVideo, duration, bucketId, bucketName, dateAdded,
+                        relativePath, displayName, mimeType
+                    )
+                )
             }  
         }  
     }  
@@ -258,6 +408,9 @@ var showExitPrivacyDialog by remember { mutableStateOf(false) }
 var privacyPinUnlocked by remember { mutableStateOf(false) }
 var privacyPinChanging by remember { mutableStateOf(false) }
 var privacyPickerActive by remember { mutableStateOf(false) }
+var recentlyDeletedScreen by remember { mutableStateOf(false) }
+var recentlyDeletedItems by remember { mutableStateOf(loadRecentlyDeleted(context)) }
+var pendingTrashItems by remember { mutableStateOf(listOf<GalleryMedia>()) }
 val pinPrefs = remember { context.getSharedPreferences("gallery_k_privacy_pin", android.content.Context.MODE_PRIVATE) }
 var storedPinHash by remember { mutableStateOf(pinPrefs.getString("pin_hash", null)) }
 var fingerprintEnabled by remember { mutableStateOf(pinPrefs.getBoolean("fingerprint_enabled", true)) }
@@ -281,27 +434,25 @@ val deleteLauncher =
     rememberLauncherForActivityResult(  
         ActivityResultContracts.StartIntentSenderForResult()  
     ) { result ->  
-        if (result.resultCode == Activity.RESULT_OK) {  
-            Toast.makeText(  
-                context,  
-                "Selected media deleted",  
-                Toast.LENGTH_SHORT  
-            ).show()  
-        } else {  
-            Toast.makeText(  
-                context,  
-                "Deletion cancelled",  
-                Toast.LENGTH_SHORT  
-            ).show()  
-        }  
-
-        selectedUris = emptySet()  
-        selectionMode = false  
+        if (result.resultCode == Activity.RESULT_OK) {
+            recentlyDeletedItems = loadRecentlyDeleted(context)
+            Toast.makeText(context, "Moved to Recently Deleted", Toast.LENGTH_SHORT).show()
+        } else {
+            permanentlyDeleteRecentlyDeleted(pendingTrashItems)
+            val pendingPaths = pendingTrashItems.mapNotNull { it.uri.path }.toSet()
+            recentlyDeletedItems = recentlyDeletedItems.filter { it.uri.path !in pendingPaths }
+            saveRecentlyDeleted(context, recentlyDeletedItems)
+            Toast.makeText(context, "Deletion cancelled", Toast.LENGTH_SHORT).show()
+        }
+        pendingTrashItems = emptyList()
+        selectedUris = emptySet()
+        selectionMode = false
         refreshKey++  
     }  
 
-LaunchedEffect(Unit) {  
-    permissionGranted = hasMediaPermission(context)  
+LaunchedEffect(Unit) {
+    permissionGranted = hasMediaPermission(context)
+    recentlyDeletedItems = loadRecentlyDeleted(context)
 }  
 
 LaunchedEffect(permissionGranted, refreshKey) {  
@@ -333,39 +484,36 @@ val tabMedia = when (selectedTab) {
 
 val displayedMedia = currentAlbum?.media ?: tabMedia  
 
-fun requestDelete() {  
-    if (selectedUris.isEmpty()) return  
+val appScope = rememberCoroutineScope()
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {  
-        try {  
-            val request = MediaStore.createDeleteRequest(  
-                context.contentResolver,  
-                selectedUris.toList()  
-            )  
-
-            deleteLauncher.launch(  
-                IntentSenderRequest.Builder(  
-                    request.intentSender  
-                ).build()  
-            )  
-        } catch (e: Exception) {  
-            Toast.makeText(  
-                context,  
-                "Could not start delete confirmation",  
-                Toast.LENGTH_LONG  
-            ).show()  
-        }  
-    } else {  
-        Toast.makeText(  
-            context,  
-            "Delete confirmation requires Android 11 or newer",  
-            Toast.LENGTH_LONG  
-        ).show()  
-    }  
+fun requestDelete() {
+    if (selectedUris.isEmpty()) return
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+        Toast.makeText(context, "Recently Deleted requires Android 11 or newer", Toast.LENGTH_LONG).show()
+        return
+    }
+    val selectedMedia = allMedia.filter { it.uri in selectedUris }
+    appScope.launch {
+        try {
+            val backups = createRecentlyDeletedCopies(context, selectedMedia)
+            pendingTrashItems = backups
+            recentlyDeletedItems = (recentlyDeletedItems + backups).sortedByDescending { it.dateAdded }
+            saveRecentlyDeleted(context, recentlyDeletedItems)
+            val request = MediaStore.createDeleteRequest(context.contentResolver, selectedMedia.map { it.uri })
+            deleteLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        } catch (e: Exception) {
+            permanentlyDeleteRecentlyDeleted(pendingTrashItems)
+            val pendingPaths = pendingTrashItems.mapNotNull { it.uri.path }.toSet()
+            recentlyDeletedItems = recentlyDeletedItems.filter { it.uri.path !in pendingPaths }
+            saveRecentlyDeleted(context, recentlyDeletedItems)
+            pendingTrashItems = emptyList()
+            Toast.makeText(context, "Could not move items to Recently Deleted: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
 }  
 
 BackHandler(  
-    enabled = privacyFolderScreen || cropScreenOpen || photoEditorOpen || selectedPreviewMedia.isNotEmpty() || selectionMode ||  
+    enabled = privacyFolderScreen || recentlyDeletedScreen || cropScreenOpen || photoEditorOpen || selectedPreviewMedia.isNotEmpty() || selectionMode ||
         selectedIndex >= 0 ||  
         selectedAlbumId != null ||  
         selectedTab != "Photos"  
@@ -373,6 +521,7 @@ BackHandler(
     when {  
         // Back from the Change PIN screen should return to the unlocked Privacy Folder,
         // not trigger the folder's Exit Privacy confirmation.
+        recentlyDeletedScreen -> { recentlyDeletedScreen = false }
         privacyFolderScreen && privacyPinChanging -> {
             privacyPinChanging = false
             privacyPinUnlocked = true
@@ -418,7 +567,34 @@ MaterialTheme {
                     onFingerprintEnabledChange = { enabled -> fingerprintEnabled = enabled; pinPrefs.edit().putBoolean("fingerprint_enabled", enabled).apply() }
                 )
             }
-        } 
+        }
+        else if (recentlyDeletedScreen) {
+            RecentlyDeletedScreen(
+                items = recentlyDeletedItems,
+                onBack = { recentlyDeletedScreen = false },
+                onRestore = { selectedItems ->
+                    appScope.launch {
+                        var restoredCount = 0
+                        selectedItems.forEach { item ->
+                            if (restoreRecentlyDeletedMedia(context, item)) {
+                                recentlyDeletedItems = recentlyDeletedItems.filterNot { it.uri == item.uri }
+                                saveRecentlyDeleted(context, recentlyDeletedItems)
+                                restoredCount++
+                            }
+                        }
+                        Toast.makeText(context, "Restored $restoredCount item(s)", Toast.LENGTH_SHORT).show()
+                        refreshKey++
+                    }
+                },
+                onPermanentlyDelete = { selectedItems ->
+                    permanentlyDeleteRecentlyDeleted(selectedItems)
+                    val deletedPaths = selectedItems.mapNotNull { it.uri.path }.toSet()
+                    recentlyDeletedItems = recentlyDeletedItems.filter { it.uri.path !in deletedPaths }
+                    saveRecentlyDeleted(context, recentlyDeletedItems)
+                    Toast.makeText(context, "Permanently deleted", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
         else if (cropScreenOpen && selectedIndex in displayedMedia.indices && !displayedMedia[selectedIndex].isVideo) {
             PhotoCropScreen(
                 uri = displayedMedia[selectedIndex].uri,
@@ -651,28 +827,21 @@ MaterialTheme {
                             )  
                         )  
 
-                        if (albums.isEmpty()) {  
-                            Box(  
-                                Modifier.fillMaxSize(),  
-                                contentAlignment = Alignment.Center  
-                            ) {  
-                                Text(  
-                                    "No albums found",  
-                                    color = Color.White  
-                                )  
-                            }  
-                        } else {  
-                            LazyVerticalGrid(  
-                                columns = GridCells.Fixed(2),  
-                                contentPadding = PaddingValues(8.dp),  
-                                modifier = Modifier.fillMaxSize()  
-                            ) {  
-                                items(albums, key = { it.id }) { album ->  
-                                    AlbumCard(album) {  
-                                        selectedAlbumId = album.id  
-                                    }  
-                                }  
-                            }  
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            contentPadding = PaddingValues(8.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            items(albums, key = { it.id }) { album ->
+                                AlbumCard(album) { selectedAlbumId = album.id }
+                            }
+                            item(key = "recently_deleted_album") {
+                                RecentlyDeletedAlbumCard(recentlyDeletedItems.size) {
+                                    recentlyDeletedScreen = true
+                                    selectedUris = emptySet()
+                                    selectionMode = false
+                                }
+                            }
                         }  
                     }  
 
@@ -975,6 +1144,229 @@ MaterialTheme {
 }
 
 @Composable
+private fun RecentlyDeletedAlbumCard(count: Int, onClick: () -> Unit) {
+    Column(
+        Modifier.padding(5.dp).clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF24262C)).clickable(onClick = onClick).padding(8.dp)
+    ) {
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(9.dp))
+                .background(Color(0xFF30333A)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("🗑", fontSize = 42.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Recently Deleted", color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text("$count items", color = Color.Gray, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun RecentlyDeletedScreen(
+    items: List<GalleryMedia>,
+    onBack: () -> Unit,
+    onRestore: (List<GalleryMedia>) -> Unit,
+    onPermanentlyDelete: (List<GalleryMedia>) -> Unit
+) {
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedUris by remember { mutableStateOf(setOf<Uri>()) }
+    var viewingIndex by remember { mutableIntStateOf(-1) }
+    var showDeleteConfirmation by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    val selectionModeState = rememberUpdatedState(selectionMode)
+    val selectedState = rememberUpdatedState(selectedUris)
+    val latestItems = rememberUpdatedState(items)
+
+    BackHandler(enabled = true) {
+        when {
+            viewingIndex >= 0 -> viewingIndex = -1
+            selectionMode -> { selectionMode = false; selectedUris = emptySet() }
+            else -> onBack()
+        }
+    }
+
+    if (viewingIndex in items.indices) {
+        val current = items[viewingIndex]
+        if (current.isVideo) {
+            VideoPlayer(uri = current.uri, onBack = { viewingIndex = -1 })
+        } else {
+            PhotoViewer(
+                uri = current.uri,
+                index = viewingIndex,
+                total = items.size,
+                onBack = { viewingIndex = -1 },
+                onIndexChange = { if (it in items.indices) viewingIndex = it },
+                showActions = false
+            )
+        }
+    } else {
+        Column(Modifier.fillMaxSize().background(Color(0xFF101114))) {
+            Row(
+                Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("‹", color = Color.White, fontSize = 32.sp, modifier = Modifier.clickable {
+                    if (selectionMode) { selectionMode = false; selectedUris = emptySet() } else onBack()
+                })
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(if (selectionMode) "${selectedUris.size} Selected" else "Recently Deleted",
+                        color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                    Text("Items stay here until you restore or delete them", color = Color.Gray, fontSize = 11.sp)
+                }
+                if (items.isNotEmpty() && !selectionMode) {
+                    TextButton(onClick = { selectionMode = true; selectedUris = items.map { it.uri }.toSet() }) {
+                        Text("Delete All", color = Color.White)
+                    }
+                } else if (selectionMode) {
+                    TextButton(onClick = {
+                        selectedUris = if (selectedUris.size == items.size) emptySet() else items.map { it.uri }.toSet()
+                    }) { Text(if (selectedUris.size == items.size) "Deselect" else "Select All", color = Color.White) }
+                }
+            }
+
+            if (selectionMode) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = selectedUris.isNotEmpty(),
+                        onClick = { onRestore(items.filter { it.uri in selectedUris }); selectionMode = false; selectedUris = emptySet() }
+                    ) { Text("Restore (${selectedUris.size})") }
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        enabled = selectedUris.isNotEmpty(),
+                        onClick = { showDeleteConfirmation = true }
+                    ) { Text("Delete (${selectedUris.size})") }
+                    TextButton(onClick = { selectionMode = false; selectedUris = emptySet() }) { Text("Cancel", color = Color.White) }
+                }
+            }
+
+            if (items.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("🗑", fontSize = 48.sp)
+                        Spacer(Modifier.height(10.dp))
+                        Text("Recently Deleted is empty", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            } else {
+                Box(
+                    Modifier.fillMaxSize().pointerInput(items) {
+                        var lastY = 0f
+                        var lastRow = -1
+                        var direction = 1
+                        var tracking = false
+                        var scrollDirection = 0
+                        var dragSelection = selectedState.value
+                        var autoScrollJob: kotlinx.coroutines.Job? = null
+                        fun applyAt(y: Float, add: Boolean) {
+                            val visible = gridState.layoutInfo.visibleItemsInfo
+                            if (visible.isEmpty()) return
+                            val hit = visible.minByOrNull { kotlin.math.abs((it.offset.y + it.size.height / 2f) - y) } ?: return
+                            val row = hit.index / 3
+                            val from = if (lastRow < 0) row else lastRow
+                            val rows = if (from <= row) (from..row) else (from downTo row)
+                            val rowUris = rows.flatMap { r ->
+                                val start = r * 3
+                                (start until (start + 3).coerceAtMost(latestItems.value.size))
+                                    .mapNotNull { latestItems.value.getOrNull(it)?.uri }
+                            }.toSet()
+                            val updated = if (add) dragSelection + rowUris else dragSelection - rowUris
+                            if (updated != dragSelection) {
+                                dragSelection = updated
+                                selectedUris = updated
+                            }
+                            lastRow = row
+                        }
+                        detectDragGestures(
+                            onDragStart = { start ->
+                                tracking = selectionModeState.value
+                                if (tracking) {
+                                    lastY = start.y; lastRow = -1; direction = 1
+                                    dragSelection = selectedState.value
+                                    applyAt(start.y, true)
+                                }
+                            },
+                            onDrag = { change, _ ->
+                                if (tracking && selectionModeState.value) {
+                                    change.consume()
+                                    val y = change.position.y
+                                    if (y - lastY > 8f) direction = 1 else if (y - lastY < -8f) direction = -1
+                                    applyAt(y, direction > 0)
+                                    lastY = y
+                                    scrollDirection = when {
+                                        y < size.height * 0.18f -> -1
+                                        y > size.height * 0.82f -> 1
+                                        else -> 0
+                                    }
+                                    if (scrollDirection != 0 && autoScrollJob?.isActive != true) {
+                                        autoScrollJob = scope.launch {
+                                            while (scrollDirection != 0 && tracking) {
+                                                gridState.scrollBy(scrollDirection * 22f)
+                                                delay(16)
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            onDragEnd = { tracking = false; scrollDirection = 0; autoScrollJob?.cancel() },
+                            onDragCancel = { tracking = false; scrollDirection = 0; autoScrollJob?.cancel() }
+                        )
+                    }
+                ) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        state = gridState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(3.dp)
+                    ) {
+                        items(items.size, key = { items[it].uri.toString() }) { index ->
+                            val media = items[index]
+                            MediaThumbnail(
+                                media = media,
+                                selected = media.uri in selectedUris,
+                                onClick = {
+                                    if (selectionMode) {
+                                        selectedUris = if (media.uri in selectedUris) selectedUris - media.uri else selectedUris + media.uri
+                                        if (selectedUris.isEmpty()) selectionMode = false
+                                    } else viewingIndex = index
+                                },
+                                onLongClick = {
+                                    selectionMode = true
+                                    selectedUris = selectedUris + media.uri
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showDeleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("Permanently delete selected items?", color = Color.White) },
+            text = { Text("These files will be removed from Recently Deleted and cannot be restored.", color = Color.LightGray) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val deleting = items.filter { it.uri in selectedUris }
+                    showDeleteConfirmation = false
+                    onPermanentlyDelete(deleting)
+                    selectedUris = emptySet()
+                    selectionMode = false
+                }) { Text("Delete permanently", color = Color(0xFFFF7777)) }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteConfirmation = false }) { Text("Cancel", color = Color.White) } },
+            containerColor = Color(0xFF202228)
+        )
+    }
+}
+
+@Composable
 private fun AlbumCard(
 album: PhotoAlbum,
 onClick: () -> Unit
@@ -1030,17 +1422,21 @@ val bitmap by produceState<Bitmap?>(
 ) {  
     value = withContext(Dispatchers.IO) {  
         try {  
-            if (Build.VERSION.SDK_INT >= 29) {  
-                context.contentResolver.loadThumbnail(  
-                    media.uri,  
-                    android.util.Size(256, 256),  
-                    null  
-                )  
-            } else {  
-                context.contentResolver  
-                    .openInputStream(media.uri)?.use {  
-                        android.graphics.BitmapFactory.decodeStream(it)  
-                    }  
+            if (media.uri.scheme == "file") {
+                val file = media.uri.path?.let(::File) ?: return@withContext null
+                if (media.isVideo && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ThumbnailUtils.createVideoThumbnail(file, Size(256, 256), null)
+                } else {
+                    context.contentResolver.openInputStream(media.uri)?.use {
+                        android.graphics.BitmapFactory.decodeStream(it)
+                    }
+                }
+            } else if (Build.VERSION.SDK_INT >= 29) {
+                context.contentResolver.loadThumbnail(media.uri, android.util.Size(256, 256), null)
+            } else {
+                context.contentResolver.openInputStream(media.uri)?.use {
+                    android.graphics.BitmapFactory.decodeStream(it)
+                }
             }  
         } catch (_: Exception) {  
             null  
@@ -1244,6 +1640,7 @@ private fun PhotoViewer(
     total: Int,
     onBack: () -> Unit,
     showHeader: Boolean = true,
+    showActions: Boolean = true,
     onIndexChange: (Int) -> Unit = {},
     onEditClick: (() -> Unit)? = null,
     onCropClick: (() -> Unit)? = null
@@ -1410,7 +1807,7 @@ private fun PhotoViewer(
             }
         }
 
-        if (showHeader) {
+        if (showHeader && showActions) {
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
