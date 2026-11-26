@@ -75,6 +75,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
+import androidx.media3.effect.TextureOverlay
 import androidx.media3.common.util.Size as Media3Size
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.transformer.Composition
@@ -2177,7 +2178,7 @@ private fun TextStudioScreen(
                                 try {
                                     val overlay = GalleryTimedTextOverlay(exportLayers)
                                     val editedItem = EditedMediaItem.Builder(MediaItem.fromUri(media.uri))
-                                        .setEffects(Effects(emptyList(), listOf(OverlayEffect(mutableListOf(overlay)))))
+                                        .setEffects(Effects(emptyList(), listOf(OverlayEffect(mutableListOf<TextureOverlay>(overlay)))))
                                         .build()
                                     val transformer = Transformer.Builder(context)
                                         .addListener(object : Transformer.Listener {
