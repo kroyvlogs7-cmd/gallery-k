@@ -371,6 +371,13 @@ BackHandler(
         selectedTab != "Photos"  
 ) {  
     when {  
+        // Back from the Change PIN screen should return to the unlocked Privacy Folder,
+        // not trigger the folder's Exit Privacy confirmation.
+        privacyFolderScreen && privacyPinChanging -> {
+            privacyPinChanging = false
+            privacyPinUnlocked = true
+            showExitPrivacyDialog = false
+        }
         privacyFolderScreen -> { showExitPrivacyDialog = true }
         cropScreenOpen -> cropScreenOpen = false
         photoEditorOpen -> photoEditorOpen = false
@@ -395,7 +402,7 @@ MaterialTheme {
                 PrivacyPinGate(
                     existingHash = storedPinHash,
                     changeMode = privacyPinChanging,
-                    onCancelChange = { privacyPinChanging = false },
+                    onCancelChange = { privacyPinChanging = false; privacyPinUnlocked = true },
                     onSuccess = { privacyPinUnlocked = true; privacyPinChanging = false },
                     onPinSaved = { hash -> pinPrefs.edit().putString("pin_hash", hash).apply(); storedPinHash = hash; privacyPinUnlocked = true; privacyPinChanging = false },
                     fingerprintEnabled = fingerprintEnabled
