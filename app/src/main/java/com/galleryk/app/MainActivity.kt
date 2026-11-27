@@ -2447,52 +2447,8 @@ private fun TextStudioScreen(
                     )
                 }
             }
-            OutlinedTextField(
-                value = current.text,
-                onValueChange = { value ->
-                    val oldText = current.text
-                    var changedIndex = 0
-                    while (changedIndex < oldText.length && changedIndex < value.length &&
-                        oldText[changedIndex] == value[changedIndex]) {
-                        changedIndex++
-                    }
-                    updateLayer { it.copy(text = value) }
-                    val nextLetter = value.indices.firstOrNull {
-                        it >= changedIndex && !value[it].isWhitespace()
-                    } ?: value.indices.lastOrNull { !value[it].isWhitespace() }
-                    selectedCharacterIndex = nextLetter ?: 0
-                },
-                label = { Text("Write your text") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 1,
-                maxLines = 3
-            )
             Text("Text Color", color = Color.White, fontWeight = FontWeight.SemiBold)
-            if (current.colorMode == "Letters" && current.text.isNotEmpty()) {
-                Text("Choose a letter, then assign its color", color = Color.Gray, fontSize = 11.sp)
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    current.text.indices.filter { !current.text[it].isWhitespace() }.forEach { charIndex ->
-                        FilterChip(
-                            selected = selectedCharacterIndex == charIndex,
-                            onClick = { selectedCharacterIndex = charIndex },
-                            label = { Text(current.text[charIndex].toString()) }
-                        )
-                    }
-                }
-            }
-            if (current.colorMode == "Lines") {
-                Text("Choose a line, then assign its color", color = Color.Gray, fontSize = 11.sp)
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    current.text.split("\\n").indices.forEach { lineIndex ->
-                        FilterChip(
-                            selected = selectedLineIndex == lineIndex,
-                            onClick = { selectedLineIndex = lineIndex },
-                            label = { Text("Line ${lineIndex + 1}") }
-                        )
-                    }
-                }
-            }
-            // Keep every color swatch on one horizontally scrollable row.
+            // Keep the existing color palette above the text entry field.
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2517,6 +2473,55 @@ private fun TextStudioScreen(
                                 }
                             }
                     )
+                }
+            }
+            OutlinedTextField(
+                value = current.text,
+                onValueChange = { value ->
+                    val oldText = current.text
+                    var changedIndex = 0
+                    while (changedIndex < oldText.length && changedIndex < value.length &&
+                        oldText[changedIndex] == value[changedIndex]) {
+                        changedIndex++
+                    }
+                    updateLayer { it.copy(text = value) }
+                    val nextLetter = value.indices.firstOrNull {
+                        it >= changedIndex && !value[it].isWhitespace()
+                    } ?: value.indices.lastOrNull { !value[it].isWhitespace() }
+                    selectedCharacterIndex = nextLetter ?: 0
+                },
+                label = { Text("Write your text") },
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    cursorColor = Color.White
+                ),
+                singleLine = true
+            )
+            if (current.colorMode == "Letters" && current.text.isNotEmpty()) {
+                Text("Choose a letter, then assign its color", color = Color.Gray, fontSize = 11.sp)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    current.text.indices.filter { !current.text[it].isWhitespace() }.forEach { charIndex ->
+                        FilterChip(
+                            selected = selectedCharacterIndex == charIndex,
+                            onClick = { selectedCharacterIndex = charIndex },
+                            label = { Text(current.text[charIndex].toString()) }
+                        )
+                    }
+                }
+            }
+            if (current.colorMode == "Lines") {
+                Text("Choose a line, then assign its color", color = Color.Gray, fontSize = 11.sp)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    current.text.split("\\n").indices.forEach { lineIndex ->
+                        FilterChip(
+                            selected = selectedLineIndex == lineIndex,
+                            onClick = { selectedLineIndex = lineIndex },
+                            label = { Text("Line ${lineIndex + 1}") }
+                        )
+                    }
                 }
             }
             Text("Color Filter", color = Color.White, fontWeight = FontWeight.SemiBold)
