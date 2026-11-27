@@ -1933,7 +1933,7 @@ private fun drawGalleryTextLayer(
     val lines = layer.text.split("\n")
     val lineHeight = paint.textSize * 1.22f
     val centerX = (width * layer.x).coerceIn(0f, width.toFloat())
-    val centerY = (height * layer.y).coerceIn(lineHeight, height - lineHeight)
+    val centerY = (height * layer.y).coerceIn(0f, height.toFloat())
     val firstBaseline = centerY - (lines.size - 1) * lineHeight / 2f
 
     var globalCharIndex = 0
@@ -2083,6 +2083,8 @@ private fun TextStudioScreen(
     var durationMs by remember(media.uri) { mutableLongStateOf(media.duration.coerceAtLeast(1000L)) }
     var previewPositionMs by remember(media.uri) { mutableLongStateOf(0L) }
     var previewBitmap by remember(media.uri) { mutableStateOf<Bitmap?>(null) }
+    var mediaWidthPx by remember(media.uri) { mutableIntStateOf(1) }
+    var mediaHeightPx by remember(media.uri) { mutableIntStateOf(1) }
     val player = remember(media.uri, media.isVideo) {
         if (media.isVideo) ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(media.uri))
@@ -2104,7 +2106,17 @@ private fun TextStudioScreen(
                 retriever.setDataSource(context, media.uri)
                 durationMs = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull()?.coerceAtLeast(1000L) ?: durationMs
+                mediaWidthPx = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                    ?.toIntOrNull()?.coerceAtLeast(1) ?: mediaWidthPx
+                mediaHeightPx = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                    ?.toIntOrNull()?.coerceAtLeast(1) ?: mediaHeightPx
                 previewBitmap = retriever.getFrameAtTime(0L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                previewBitmap?.let { frame ->
+                    if (mediaWidthPx <= 1 || mediaHeightPx <= 1) {
+                        mediaWidthPx = frame.width
+                        mediaHeightPx = frame.height
+                    }
+                }
             } catch (_: Exception) {
             } finally {
                 try { retriever.release() } catch (_: Exception) {}
@@ -2113,6 +2125,10 @@ private fun TextStudioScreen(
             previewBitmap = withContext(Dispatchers.IO) {
                 try { context.contentResolver.openInputStream(media.uri)?.use { android.graphics.BitmapFactory.decodeStream(it) } }
                 catch (_: Exception) { null }
+            }
+            previewBitmap?.let { bitmap ->
+                mediaWidthPx = bitmap.width.coerceAtLeast(1)
+                mediaHeightPx = bitmap.height.coerceAtLeast(1)
             }
         }
     }
@@ -2279,79 +2295,95 @@ private fun TextStudioScreen(
                 .clip(RoundedCornerShape(14.dp)).background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            if (media.isVideo && player != null) {
-                AndroidView(
-                    factory = { viewContext ->
-                        PlayerView(viewContext).apply {
-                            this.player = player
-                            useController = true
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        }
-                    },
-                    update = { it.player = player },
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else if (previewBitmap != null) {
-                Image(
-                    bitmap = previewBitmap!!.asImageBitmap(),
-                    contentDescription = "Text editor photo preview",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
-                )
-            } else {
-                CircularProgressIndicator(color = Color.White)
-            }
-            val previewWidthPx = with(LocalDensity.current) { maxWidth.toPx() }.coerceAtLeast(1f)
-            val previewHeightPx = with(LocalDensity.current) { maxHeight.toPx() }.coerceAtLeast(1f)
-            layers.filter { it.text.isNotBlank() && (!media.isVideo || (previewPositionMs >= it.startMs && previewPositionMs <= it.endMs)) }
-                .forEach { layer ->
-                    var textLayout by remember(layer.id) { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
-                    Text(
-                        text = buildGalleryPreviewText(layer),
-                        color = Color(layer.color),
-                        fontSize = layer.fontSize.sp,
-                        fontWeight = if (layer.bold) FontWeight.Bold else FontWeight.Normal,
-                        fontStyle = if (layer.italic) androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal,
-                        fontFamily = when (layer.fontFamily) {
-                            "serif" -> androidx.compose.ui.text.font.FontFamily.Serif
-                            "monospace" -> androidx.compose.ui.text.font.FontFamily.Monospace
-                            else -> androidx.compose.ui.text.font.FontFamily.SansSerif
-                        },
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        onTextLayout = { textLayout = it },
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .offset(x = maxWidth * (layer.x - 0.5f), y = maxHeight * (layer.y - 0.5f))
-                            .padding(horizontal = 10.dp)
-                            .pointerInput(layer.id, layer.text) {
-                                detectTapGestures { tap ->
-                                    selectedLayerId = layer.id
-                                    val index = textLayout?.getOffsetForPosition(tap)
-                                    if (index != null && index in layer.text.indices) selectedCharacterIndex = index
-                                }
+            val density = LocalDensity.current
+            val aspectRatio = (mediaWidthPx.toFloat() / mediaHeightPx.toFloat()).coerceIn(0.1f, 10f)
+            val availableWidthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
+            val availableHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
+            val fittedWidthPx = minOf(availableWidthPx, availableHeightPx * aspectRatio).coerceAtLeast(1f)
+            val fittedHeightPx = (fittedWidthPx / aspectRatio).coerceAtMost(availableHeightPx).coerceAtLeast(1f)
+            val fittedWidth = with(density) { fittedWidthPx.toDp() }
+            val fittedHeight = with(density) { fittedHeightPx.toDp() }
+
+            Box(
+                Modifier.width(fittedWidth).height(fittedHeight),
+                contentAlignment = Alignment.Center
+            ) {
+                if (media.isVideo && player != null) {
+                    AndroidView(
+                        factory = { viewContext ->
+                            PlayerView(viewContext).apply {
+                                this.player = player
+                                useController = true
+                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                             }
-                            .pointerInput(layer.id, previewWidthPx, previewHeightPx) {
-                                detectDragGestures { change, dragAmount ->
-                                    change.consume()
-                                    selectedLayerId = layer.id
-                                    val dx = dragAmount.x / previewWidthPx
-                                    val dy = dragAmount.y / previewHeightPx
-                                    val index = layers.indexOfFirst { it.id == layer.id }
-                                    if (index >= 0) layers[index] = layers[index].copy(
-                                        x = (layers[index].x + dx).coerceIn(0f, 1f),
-                                        y = (layers[index].y + dy).coerceIn(0f, 1f)
-                                    )
-                                }
-                            },
-                        style = androidx.compose.ui.text.TextStyle(
-                            shadow = if (layer.shadow) androidx.compose.ui.graphics.Shadow(
-                                color = Color.Black,
-                                offset = androidx.compose.ui.geometry.Offset(2f, 3f),
-                                blurRadius = 5f
-                            ) else null
-                        )
+                        },
+                        update = { it.player = player },
+                        modifier = Modifier.fillMaxSize()
                     )
+                } else if (previewBitmap != null) {
+                    Image(
+                        bitmap = previewBitmap!!.asImageBitmap(),
+                        contentDescription = "Text editor photo preview",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.FillBounds
+                    )
+                } else {
+                    CircularProgressIndicator(color = Color.White)
                 }
+
+                layers.filter { it.text.isNotBlank() && (!media.isVideo || (previewPositionMs >= it.startMs && previewPositionMs <= it.endMs)) }
+                    .forEach { layer ->
+                        var textLayout by remember(layer.id) { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+                        val previewFontSize = (layer.fontSize * fittedWidthPx / 420f / density.density)
+                            .coerceAtLeast(18f / density.density)
+                        Text(
+                            text = buildGalleryPreviewText(layer),
+                            color = Color(layer.color),
+                            fontSize = previewFontSize.sp,
+                            fontWeight = if (layer.bold) FontWeight.Bold else FontWeight.Normal,
+                            fontStyle = if (layer.italic) androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal,
+                            fontFamily = when (layer.fontFamily) {
+                                "serif" -> androidx.compose.ui.text.font.FontFamily.Serif
+                                "monospace" -> androidx.compose.ui.text.font.FontFamily.Monospace
+                                else -> androidx.compose.ui.text.font.FontFamily.SansSerif
+                            },
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            onTextLayout = { textLayout = it },
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .offset(x = fittedWidth * (layer.x - 0.5f), y = fittedHeight * (layer.y - 0.5f))
+                                .padding(horizontal = 10.dp)
+                                .pointerInput(layer.id, layer.text) {
+                                    detectTapGestures { tap ->
+                                        selectedLayerId = layer.id
+                                        val index = textLayout?.getOffsetForPosition(tap)
+                                        if (index != null && index in layer.text.indices) selectedCharacterIndex = index
+                                    }
+                                }
+                                .pointerInput(layer.id, fittedWidthPx, fittedHeightPx) {
+                                    detectTransformGestures { _, pan, zoomChange, _ ->
+                                        selectedLayerId = layer.id
+                                        val index = layers.indexOfFirst { it.id == layer.id }
+                                        if (index >= 0) {
+                                            val old = layers[index]
+                                            layers[index] = old.copy(
+                                                x = (old.x + pan.x / fittedWidthPx).coerceIn(0f, 1f),
+                                                y = (old.y + pan.y / fittedHeightPx).coerceIn(0f, 1f),
+                                                fontSize = (old.fontSize * zoomChange).coerceAtLeast(1f)
+                                            )
+                                        }
+                                    }
+                                },
+                            style = androidx.compose.ui.text.TextStyle(
+                                shadow = if (layer.shadow) androidx.compose.ui.graphics.Shadow(
+                                    color = Color.Black,
+                                    offset = androidx.compose.ui.geometry.Offset(2f, 3f),
+                                    blurRadius = 5f
+                                ) else null
+                            )
+                        )
+                    }
+            }
         }
 
         Column(
@@ -2465,11 +2497,7 @@ private fun TextStudioScreen(
                 }
             }
             Text("Font Size  ${current.fontSize.toInt()}", color = Color.White)
-            Slider(
-                value = current.fontSize,
-                onValueChange = { size -> updateLayer { it.copy(fontSize = size) } },
-                valueRange = 16f..64f
-            )
+            Text("Pinch with two fingers on the text to resize; drag with one finger to move", color = Color.Gray, fontSize = 11.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = current.bold, onClick = { updateLayer { it.copy(bold = !it.bold) } }, label = { Text("Bold") })
                 FilterChip(selected = current.italic, onClick = { updateLayer { it.copy(italic = !it.italic) } }, label = { Text("Italic") })
