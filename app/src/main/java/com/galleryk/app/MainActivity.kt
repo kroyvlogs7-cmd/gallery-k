@@ -34,6 +34,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -963,7 +964,6 @@ MaterialTheme {
                         val selectionGridState = rememberLazyGridState()
                         val selectionScope = rememberCoroutineScope()
                         val selectionModeState = rememberUpdatedState(selectionMode)
-                        val latestSelectedUris = rememberUpdatedState(selectedUris)
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1023,16 +1023,17 @@ MaterialTheme {
                                     lastRowStartIndex = targetRowNumber
                                 }
 
-                                detectDragGestures(
+                                detectDragGesturesAfterLongPress(
                                     onDragStart = { start ->
-                                        trackingSelectionDrag = selectionModeState.value
+                                        trackingSelectionDrag = true
+                                        selectionMode = true
                                         if (trackingSelectionDrag) {
                                             lastY = start.y
                                             accumulatedDy = 0f
                                             scrollDirection = 0
                                             dragDirection = 1
                                             lastRowStartIndex = -1
-                                            dragSelectedUris = latestSelectedUris.value
+                                            dragSelectedUris = selectedUris
                                             applyRowAt(start.y, add = true)
                                         }
                                     },
@@ -1051,26 +1052,22 @@ MaterialTheme {
                                             applyRowAt(y, add = dragDirection > 0)
                                             lastY = y
 
-                                            // Start auto-scroll only when the finger reaches
-                                            // the same edge zone used by the other selection grids.
-                                            val edge = 110.dp.toPx()
+                                            // Up-scroll can begin from the middle; down-scroll
+                                            // begins only in the lower 30% of the screen.
                                             scrollDirection = when {
-                                                y <= edge -> -1
-                                                y >= size.height - edge -> 1
+                                                y <= size.height * 0.50f -> -1
+                                                y >= size.height * 0.70f -> 1
                                                 else -> 0
                                             }
                                             if (scrollDirection != 0 && autoScrollJob?.isActive != true) {
                                                 autoScrollJob = selectionScope.launch {
                                                     while (scrollDirection != 0 && trackingSelectionDrag) {
                                                         val direction = scrollDirection
-                                                        val edge = 110.dp.toPx()
-                                                        val distance = if (direction < 0) {
-                                                            (edge - lastY).coerceAtLeast(0f)
-                                                        } else {
-                                                            (lastY - (size.height - edge)).coerceAtLeast(0f)
-                                                        }
-                                                        val speed = (6f + (distance / edge.coerceAtLeast(1f)) * 22f)
-                                                            .coerceIn(6f, 28f)
+                                                        val threshold = if (direction < 0) size.height * 0.50f else size.height * 0.70f
+                                                        val distance = if (direction < 0) threshold - lastY else lastY - threshold
+                                                        val maxDistance = if (direction < 0) threshold else size.height - threshold
+                                                        val speed = (7f + (distance / maxDistance.coerceAtLeast(1f)) * 13f)
+                                                            .coerceIn(7f, 20f)
                                                         selectionGridState.scrollBy(direction * speed)
                                                         applyRowAt(lastY, add = dragDirection > 0)
                                                         kotlinx.coroutines.delay(16L)
@@ -1179,10 +1176,7 @@ MaterialTheme {
                                                     selectedIndex = mediaIndex
                                                 }
                                             },
-                                            onLongClick = {
-                                                selectionMode = true
-                                                selectedUris = selectedUris + media.uri
-                                            }
+                                            onLongClick = null
                                         )
                                     }
                                 }
@@ -1504,7 +1498,7 @@ private fun MediaThumbnail(
 media: GalleryMedia,
 selected: Boolean,
 onClick: () -> Unit,
-onLongClick: () -> Unit
+onLongClick: (() -> Unit)?
 ) {
 val context = LocalContext.current
 
@@ -4095,9 +4089,9 @@ private fun PrivacyFolderScreen(
                                 lastSelectedRow = targetRow
                             }
 
-                            detectDragGestures(
+                            detectDragGesturesAfterLongPress(
                                 onDragStart = { start ->
-                                    trackingPickerSelection = latestPickerSelection.value.isNotEmpty()
+                                    trackingPickerSelection = true
                                     if (trackingPickerSelection) {
                                         dragSelectedUris = latestPickerSelection.value
                                         lastX = start.x
@@ -4134,15 +4128,7 @@ private fun PrivacyFolderScreen(
                                         if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
                                             autoScrollJob = pickerScope.launch {
                                                 while (edgeDirection != 0 && trackingPickerSelection) {
-                                                    val edge = 110.dp.toPx()
-                                                    val distance = if (edgeDirection < 0) {
-                                                        (edge - lastY).coerceAtLeast(0f)
-                                                    } else {
-                                                        (lastY - (size.height - edge)).coerceAtLeast(0f)
-                                                    }
-                                                    val speed = (6f + (distance / edge.coerceAtLeast(1f)) * 22f)
-                                                        .coerceIn(6f, 28f)
-                                                    pickerGridState.scrollBy(edgeDirection * speed)
+                                                    pickerGridState.scrollBy(edgeDirection * 9f)
                                                     selectAt(lastY)
                                                     kotlinx.coroutines.delay(16L)
                                                 }
@@ -4185,7 +4171,7 @@ private fun PrivacyFolderScreen(
                                         pickerSelectedUris - media.uri
                                     } else pickerSelectedUris + media.uri
                                 },
-                                onLongClick = { pickerSelectedUris = pickerSelectedUris + media.uri }
+                                onLongClick = null
                             )
                         }
                     }
@@ -4580,12 +4566,12 @@ private fun PrivacyFolderScreen(
                             lastPrivateRow = targetRow
                         }
 
-                        detectDragGestures(
+                        detectDragGesturesAfterLongPress(
                             onDragStart = { start ->
-                                // Keep this pointerInput keyed only by the media list. A selection
-                                // state change must not cancel the active drag gesture.
-                                trackingPrivateSelection = latestPrivateSelected.value.isNotEmpty()
-                                privateSelectionDragging = trackingPrivateSelection
+                                // The grid owns the long-press gesture so selection can continue
+                                // immediately as the same finger moves across thumbnails.
+                                trackingPrivateSelection = true
+                                privateSelectionDragging = true
                                 if (trackingPrivateSelection) {
                                     dragSelectedPaths = latestPrivateSelected.value
                                     lastX = start.x
@@ -4623,15 +4609,7 @@ private fun PrivacyFolderScreen(
                                     if (privateEdgeDirection != 0 && privateAutoScrollJob?.isActive != true) {
                                         privateAutoScrollJob = privateSelectionScope.launch {
                                             while (privateEdgeDirection != 0 && trackingPrivateSelection) {
-                                                val edge = 110.dp.toPx()
-                                                val distance = if (privateEdgeDirection < 0) {
-                                                    (edge - lastY).coerceAtLeast(0f)
-                                                } else {
-                                                    (lastY - (size.height - edge)).coerceAtLeast(0f)
-                                                }
-                                                val speed = (6f + (distance / edge.coerceAtLeast(1f)) * 22f)
-                                                    .coerceIn(6f, 28f)
-                                                privateGridState.scrollBy(privateEdgeDirection * speed)
+                                                privateGridState.scrollBy(privateEdgeDirection * 9f)
                                                 selectPrivateAt(lastY)
                                                 kotlinx.coroutines.delay(16L)
                                             }
@@ -4711,21 +4689,16 @@ private fun PrivacyFolderScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(1f)
-                            .combinedClickable(
-                                onClick = {
-                                    if (selectedPrivateFiles.isNotEmpty()) {
-                                        selectedPrivateFiles = if (file.absolutePath in selectedPrivateFiles) {
-                                            selectedPrivateFiles - file.absolutePath
-                                        } else selectedPrivateFiles + file.absolutePath
-                                    } else {
-                                        previewFiles = filteredFiles
-                                        previewIndex = filteredFiles.indexOf(file).coerceAtLeast(0)
-                                    }
-                                },
-                                onLongClick = {
-                                    selectedPrivateFiles = selectedPrivateFiles + file.absolutePath
+                            .clickable {
+                                if (selectedPrivateFiles.isNotEmpty()) {
+                                    selectedPrivateFiles = if (file.absolutePath in selectedPrivateFiles) {
+                                        selectedPrivateFiles - file.absolutePath
+                                    } else selectedPrivateFiles + file.absolutePath
+                                } else {
+                                    previewFiles = filteredFiles
+                                    previewIndex = filteredFiles.indexOf(file).coerceAtLeast(0)
                                 }
-                            ),
+                            },
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF262329))
                     ) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
