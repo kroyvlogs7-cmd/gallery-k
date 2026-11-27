@@ -2391,18 +2391,30 @@ private fun TextStudioScreen(
                 // renderer used when exporting the saved photo/video.
                 Canvas(Modifier.fillMaxSize()) {
                     val nativeCanvas = drawContext.canvas.nativeCanvas
-                    val canvasWidth = size.width.toInt().coerceAtLeast(1)
-                    val canvasHeight = size.height.toInt().coerceAtLeast(1)
+                    val previewWidthPx = size.width.coerceAtLeast(1f)
+                    val previewHeightPx = size.height.coerceAtLeast(1f)
+                    val sourceWidthPx = mediaWidthPx.coerceAtLeast(1)
+                    val sourceHeightPx = mediaHeightPx.coerceAtLeast(1)
+
+                    // Render text in the ORIGINAL media pixel coordinate system,
+                    // exactly as the export path does, then scale that canvas
+                    // into the fitted on-screen preview rectangle.
+                    val saveCount = nativeCanvas.save()
+                    nativeCanvas.scale(
+                        previewWidthPx / sourceWidthPx.toFloat(),
+                        previewHeightPx / sourceHeightPx.toFloat()
+                    )
                     layers.forEach { layer ->
                         drawGalleryTextLayer(
                             canvas = nativeCanvas,
                             layer = layer,
-                            width = canvasWidth,
-                            height = canvasHeight,
+                            width = sourceWidthPx,
+                            height = sourceHeightPx,
                             timeMs = previewPositionMs,
                             useTiming = media.isVideo
                         )
                     }
+                    nativeCanvas.restoreToCount(saveCount)
                 }
             }
         }
