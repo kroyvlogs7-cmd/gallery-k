@@ -1843,7 +1843,21 @@ private data class GalleryTextLayer(
     val y: Float = 0.72f,
     val startMs: Long = 0L,
     val endMs: Long = Long.MAX_VALUE,
-    val fontFamily: String = "sans-serif"
+    val fontFamily: String = "sans-serif",
+    val backgroundColor: Int? = null,
+    val backgroundAlpha: Float = 0.75f,
+    val backgroundPadding: Float = 12f,
+    val backgroundRadius: Float = 14f,
+    val strokeColor: Int = android.graphics.Color.BLACK,
+    val strokeWidth: Float = 3f,
+    val textAlpha: Float = 1f,
+    val rotation: Float = 0f,
+    val letterSpacing: Float = 0f,
+    val lineSpacing: Float = 1.22f,
+    val alignment: String = "Center",
+    val curved: Boolean = false,
+    val gradientStart: Int = android.graphics.Color.RED,
+    val gradientEnd: Int = android.graphics.Color.YELLOW
 )
 
 private val galleryTextPalette = buildList {
@@ -1930,93 +1944,143 @@ private fun drawGalleryTextLayer(
         textAlign = android.graphics.Paint.Align.LEFT
         typeface = android.graphics.Typeface.create(layer.fontFamily, style)
         color = layer.color
+        alpha = (layer.textAlpha.coerceIn(0f, 1f) * 255).toInt()
     }
     val lines = layer.text.split("\n")
     val horizontalMargin = (width * 0.015f).coerceAtLeast(2f)
     val verticalMargin = (height * 0.015f).coerceAtLeast(2f)
     val maxAllowedWidth = (width - horizontalMargin * 2f).coerceAtLeast(1f)
     val maxAllowedHeight = (height - verticalMargin * 2f).coerceAtLeast(1f)
-
-    // Fit the complete text block inside the media frame before positioning it.
-    val widestLine = lines.maxOfOrNull { paint.measureText(it) } ?: 0f
-    if (widestLine > maxAllowedWidth && widestLine > 0f) {
-        paint.textSize *= maxAllowedWidth / widestLine
+    fun measuredLine(text: String): Float {
+        val base = paint.measureText(text)
+        return (base + (text.length - 1).coerceAtLeast(0) * paint.textSize * layer.letterSpacing).coerceAtLeast(0f)
     }
-    var lineHeight = paint.textSize * 1.22f
+    val widestLine = lines.maxOfOrNull { measuredLine(it) } ?: 0f
+    if (widestLine > maxAllowedWidth && widestLine > 0f) paint.textSize *= maxAllowedWidth / widestLine
+    var lineHeight = paint.textSize * layer.lineSpacing.coerceIn(0.8f, 2.5f)
     var metrics = paint.fontMetrics
     var blockHeight = (lines.size - 1) * lineHeight + (metrics.descent - metrics.ascent)
     if (blockHeight > maxAllowedHeight && blockHeight > 0f) {
         paint.textSize *= maxAllowedHeight / blockHeight
-        lineHeight = paint.textSize * 1.22f
+        lineHeight = paint.textSize * layer.lineSpacing.coerceIn(0.8f, 2.5f)
         metrics = paint.fontMetrics
         blockHeight = (lines.size - 1) * lineHeight + (metrics.descent - metrics.ascent)
     }
-
-    val lineWidths = lines.map { paint.measureText(it) }
+    val lineWidths = lines.map { measuredLine(it) }
     val maxLineWidth = lineWidths.maxOrNull() ?: 0f
+    val pad = layer.backgroundPadding.coerceIn(0f, width * 0.08f) * (width / 420f)
+    val boxWidth = (maxLineWidth + pad * 2f).coerceAtMost(width - horizontalMargin * 2f)
+    val boxHeight = (blockHeight + pad * 2f).coerceAtMost(height - verticalMargin * 2f)
     val centerX = (width * layer.x).coerceIn(
-        horizontalMargin + maxLineWidth / 2f,
-        (width - horizontalMargin - maxLineWidth / 2f).coerceAtLeast(horizontalMargin + maxLineWidth / 2f)
+        horizontalMargin + boxWidth / 2f,
+        (width - horizontalMargin - boxWidth / 2f).coerceAtLeast(horizontalMargin + boxWidth / 2f)
     )
     val centerY = (height * layer.y).coerceIn(
-        verticalMargin + blockHeight / 2f,
-        (height - verticalMargin - blockHeight / 2f).coerceAtLeast(verticalMargin + blockHeight / 2f)
+        verticalMargin + boxHeight / 2f,
+        (height - verticalMargin - boxHeight / 2f).coerceAtLeast(verticalMargin + boxHeight / 2f)
     )
-    val firstBaseline = centerY - (lines.size - 1) * lineHeight / 2f -
-        (metrics.ascent + metrics.descent) / 2f
-
     val saveCount = canvas.save()
     canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
+    canvas.rotate(layer.rotation.coerceIn(-180f, 180f), centerX, centerY)
+
+    layer.backgroundColor?.let { bg ->
+        val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = bg
+            alpha = (layer.backgroundAlpha.coerceIn(0f, 1f) * 255).toInt()
+            style = android.graphics.Paint.Style.FILL
+        }
+        canvas.drawRoundRect(
+            centerX - boxWidth / 2f, centerY - boxHeight / 2f,
+            centerX + boxWidth / 2f, centerY + boxHeight / 2f,
+            layer.backgroundRadius.coerceIn(0f, 80f) * (width / 420f),
+            layer.backgroundRadius.coerceIn(0f, 80f) * (width / 420f), bgPaint
+        )
+    }
+
     var globalCharIndex = 0
     lines.forEachIndexed { lineIndex, line ->
-        val baseline = firstBaseline + lineIndex * lineHeight
+        val baseline = centerY - (lines.size - 1) * lineHeight / 2f -
+            (metrics.ascent + metrics.descent) / 2f + lineIndex * lineHeight
         val lineWidth = lineWidths[lineIndex]
-        if (layer.colorMode == "Letters") {
-            var x = centerX - lineWidth / 2f
+        val startX = when (layer.alignment) {
+            "Left" -> centerX - maxLineWidth / 2f
+            "Right" -> centerX + maxLineWidth / 2f - lineWidth
+            else -> centerX - lineWidth / 2f
+        }
+        val lineColor = if (layer.colorMode == "Lines") layer.lineColors[lineIndex] ?: layer.color else layer.color
+        if (layer.curved && line.isNotEmpty()) {
+            val path = android.graphics.Path()
+            val radius = (lineWidth / Math.PI.toFloat()).coerceAtLeast(paint.textSize)
+            path.addArc(
+                centerX - radius, centerY - radius * 0.55f,
+                centerX + radius, centerY + radius * 1.45f,
+                205f, 130f
+            )
+            paint.style = android.graphics.Paint.Style.FILL
+            paint.color = lineColor
+            paint.shader = if (layer.colorMode == "Gradient") android.graphics.LinearGradient(
+                centerX - lineWidth / 2f, baseline, centerX + lineWidth / 2f, baseline,
+                layer.gradientStart, layer.gradientEnd, android.graphics.Shader.TileMode.CLAMP
+            ) else null
+            if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
+            if (layer.outline) {
+                paint.style = android.graphics.Paint.Style.STROKE
+                paint.strokeWidth = layer.strokeWidth.coerceIn(0.5f, 20f) * (width / 420f)
+                paint.color = layer.strokeColor
+                canvas.drawTextOnPath(line, path, 0f, 0f, paint)
+                paint.style = android.graphics.Paint.Style.FILL
+            }
+            paint.color = lineColor
+            canvas.drawTextOnPath(line, path, 0f, 0f, paint)
+            paint.clearShadowLayer()
+            paint.shader = null
+        } else if (layer.colorMode == "Letters") {
+            var x = startX
             line.forEachIndexed { charIndex, character ->
                 val charText = character.toString()
                 val charWidth = paint.measureText(charText)
-                val charColor = layer.letterColors[globalCharIndex + charIndex]
-                    ?: layer.color
+                val charColor = layer.letterColors[globalCharIndex + charIndex] ?: layer.color
                 paint.shader = null
+                paint.style = android.graphics.Paint.Style.FILL
                 paint.color = charColor
                 if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
                 if (layer.outline) {
                     paint.style = android.graphics.Paint.Style.STROKE
-                    paint.strokeWidth = (paint.textSize * 0.075f).coerceAtLeast(1f)
-                    paint.color = android.graphics.Color.BLACK
+                    paint.strokeWidth = layer.strokeWidth.coerceIn(0.5f, 20f) * (width / 420f)
+                    paint.color = layer.strokeColor
                     canvas.drawText(charText, x, baseline, paint)
                     paint.style = android.graphics.Paint.Style.FILL
                     paint.color = charColor
                 }
                 canvas.drawText(charText, x, baseline, paint)
                 paint.clearShadowLayer()
-                x += charWidth
+                x += charWidth + paint.textSize * layer.letterSpacing
             }
         } else {
-            val lineColor = if (layer.colorMode == "Lines") {
-                layer.lineColors[lineIndex] ?: layer.color
-            } else layer.color
             paint.color = lineColor
-            paint.shader = null
-            if (layer.colorMode == "Gradient" && line.isNotEmpty()) {
-                paint.shader = android.graphics.LinearGradient(
-                    0f, baseline - paint.textSize, width.toFloat(), baseline,
-                    intArrayOf(android.graphics.Color.RED, android.graphics.Color.YELLOW, android.graphics.Color.CYAN, android.graphics.Color.MAGENTA),
-                    null,
-                    android.graphics.Shader.TileMode.CLAMP
-                )
-            }
+            paint.shader = if (layer.colorMode == "Gradient") android.graphics.LinearGradient(
+                startX, baseline - paint.textSize, startX + lineWidth, baseline,
+                layer.gradientStart, layer.gradientEnd, android.graphics.Shader.TileMode.CLAMP
+            ) else null
             if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
             if (layer.outline) {
                 paint.style = android.graphics.Paint.Style.STROKE
-                paint.strokeWidth = (paint.textSize * 0.075f).coerceAtLeast(1f)
-                paint.color = android.graphics.Color.BLACK
-                canvas.drawText(line, centerX - lineWidth / 2f, baseline, paint)
+                paint.strokeWidth = layer.strokeWidth.coerceIn(0.5f, 20f) * (width / 420f)
+                paint.color = layer.strokeColor
+                canvas.drawText(line, startX, baseline, paint)
                 paint.style = android.graphics.Paint.Style.FILL
                 paint.color = lineColor
             }
-            canvas.drawText(line, centerX - lineWidth / 2f, baseline, paint)
+            if (layer.letterSpacing == 0f) {
+                canvas.drawText(line, startX, baseline, paint)
+            } else {
+                var x = startX
+                line.forEach { ch ->
+                    val value = ch.toString()
+                    canvas.drawText(value, x, baseline, paint)
+                    x += paint.measureText(value) + paint.textSize * layer.letterSpacing
+                }
+            }
             paint.clearShadowLayer()
             paint.shader = null
             paint.style = android.graphics.Paint.Style.FILL
@@ -2110,6 +2174,29 @@ private fun TextStudioScreen(
     var nextLayerId by remember(media.uri) { mutableIntStateOf(2) }
     var selectedCharacterIndex by remember(media.uri) { mutableIntStateOf(0) }
     var selectedLineIndex by remember(media.uri) { mutableIntStateOf(0) }
+    val undoHistory = remember(media.uri) { mutableStateListOf<List<GalleryTextLayer>>() }
+    val redoHistory = remember(media.uri) { mutableStateListOf<List<GalleryTextLayer>>() }
+    fun saveHistory() {
+        undoHistory.add(layers.toList())
+        if (undoHistory.size > 40) undoHistory.removeAt(0)
+        redoHistory.clear()
+    }
+    fun undoChange() {
+        if (undoHistory.isNotEmpty()) {
+            redoHistory.add(layers.toList())
+            val previous = undoHistory.removeAt(undoHistory.lastIndex)
+            layers.clear(); layers.addAll(previous)
+            if (layers.none { it.id == selectedLayerId }) selectedLayerId = layers.first().id
+        }
+    }
+    fun redoChange() {
+        if (redoHistory.isNotEmpty()) {
+            undoHistory.add(layers.toList())
+            val next = redoHistory.removeAt(redoHistory.lastIndex)
+            layers.clear(); layers.addAll(next)
+            if (layers.none { it.id == selectedLayerId }) selectedLayerId = layers.first().id
+        }
+    }
     var exporting by remember { mutableStateOf(false) }
     var durationMs by remember(media.uri) { mutableLongStateOf(media.duration.coerceAtLeast(1000L)) }
     var previewPositionMs by remember(media.uri) { mutableLongStateOf(0L) }
@@ -2127,7 +2214,13 @@ private fun TextStudioScreen(
     val current = layers.getOrNull(selectedIndex) ?: layers.first()
     fun updateLayer(transform: (GalleryTextLayer) -> GalleryTextLayer) {
         val index = layers.indexOfFirst { it.id == selectedLayerId }
-        if (index >= 0) layers[index] = transform(layers[index])
+        if (index >= 0) {
+            val updated = transform(layers[index])
+            if (updated != layers[index]) {
+                saveHistory()
+                layers[index] = updated
+            }
+        }
     }
 
     LaunchedEffect(media.uri) {
@@ -2455,14 +2548,18 @@ private fun TextStudioScreen(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Text Layers", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                TextButton(enabled = undoHistory.isNotEmpty(), onClick = { undoChange() }) { Text("Undo") }
+                TextButton(enabled = redoHistory.isNotEmpty(), onClick = { redoChange() }) { Text("Redo") }
                 TextButton(onClick = {
+                    saveHistory()
                     val id = nextLayerId++
                     layers.add(GalleryTextLayer(id = id, text = "New Text", y = 0.55f))
                     selectedLayerId = id
-                }) { Text("+ Add Text", color = Color(0xFF8CB9FF)) }
+                }) { Text("+ Add", color = Color(0xFF8CB9FF)) }
                 TextButton(
                     enabled = layers.size > 1,
                     onClick = {
+                        saveHistory()
                         layers.removeAll { it.id == selectedLayerId }
                         selectedLayerId = layers.first().id
                     }
@@ -2570,6 +2667,80 @@ private fun TextStudioScreen(
                 FilterChip(selected = current.italic, onClick = { updateLayer { it.copy(italic = !it.italic) } }, label = { Text("Italic") })
                 FilterChip(selected = current.shadow, onClick = { updateLayer { it.copy(shadow = !it.shadow) } }, label = { Text("Shadow") })
                 FilterChip(selected = current.outline, onClick = { updateLayer { it.copy(outline = !it.outline) } }, label = { Text("Outline") })
+            }
+            Text("Text Tools", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = {
+                    saveHistory()
+                    val copy = current.copy(id = nextLayerId++, text = current.text + " Copy", x = (current.x + 0.04f).coerceAtMost(0.9f), y = (current.y + 0.04f).coerceAtMost(0.9f))
+                    layers.add(copy); selectedLayerId = copy.id
+                }) { Text("Duplicate") }
+                OutlinedButton(enabled = selectedIndex < layers.lastIndex, onClick = {
+                    saveHistory()
+                    val i = layers.indexOfFirst { it.id == selectedLayerId }
+                    if (i in 0 until layers.lastIndex) { val item = layers.removeAt(i); layers.add(i + 1, item) }
+                }) { Text("Bring Forward") }
+                OutlinedButton(enabled = selectedIndex > 0, onClick = {
+                    saveHistory()
+                    val i = layers.indexOfFirst { it.id == selectedLayerId }
+                    if (i > 0) { val item = layers.removeAt(i); layers.add(i - 1, item) }
+                }) { Text("Send Back") }
+            }
+            Text("Background", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(selected = current.backgroundColor == null, onClick = { updateLayer { it.copy(backgroundColor = null) } }, label = { Text("None") })
+                listOf("Black" to android.graphics.Color.BLACK, "White" to android.graphics.Color.WHITE, "Blue" to android.graphics.Color.rgb(35, 95, 180), "Red" to android.graphics.Color.RED).forEach { (name, value) ->
+                    FilterChip(selected = current.backgroundColor == value, onClick = { updateLayer { it.copy(backgroundColor = value) } }, label = { Text(name) })
+                }
+            }
+            Text("Background Opacity  ${(current.backgroundAlpha * 100).toInt()}%", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.backgroundAlpha, onValueChange = { value -> updateLayer { layer -> layer.copy(backgroundAlpha = value) } }, valueRange = 0f..1f)
+            Text("Background Padding  ${current.backgroundPadding.toInt()}", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.backgroundPadding, onValueChange = { value -> updateLayer { layer -> layer.copy(backgroundPadding = value) } }, valueRange = 0f..40f)
+            Text("Corner Radius  ${current.backgroundRadius.toInt()}", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.backgroundRadius, onValueChange = { value -> updateLayer { layer -> layer.copy(backgroundRadius = value) } }, valueRange = 0f..40f)
+            Text("Font Size  ${current.fontSize.toInt()}", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.fontSize.coerceIn(12f, 100f), onValueChange = { value -> updateLayer { layer -> layer.copy(fontSize = value) } }, valueRange = 12f..100f)
+            Text("Text Opacity  ${(current.textAlpha * 100).toInt()}%", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.textAlpha, onValueChange = { value -> updateLayer { layer -> layer.copy(textAlpha = value) } }, valueRange = 0f..1f)
+            Text("Outline Width  ${current.strokeWidth.toInt()}", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.strokeWidth, onValueChange = { value -> updateLayer { layer -> layer.copy(strokeWidth = value) } }, valueRange = 0.5f..12f)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("Black" to android.graphics.Color.BLACK, "White" to android.graphics.Color.WHITE, "Red" to android.graphics.Color.RED, "Blue" to android.graphics.Color.BLUE).forEach { (name, value) ->
+                    FilterChip(selected = current.strokeColor == value, onClick = { updateLayer { it.copy(strokeColor = value) } }, label = { Text(name) })
+                }
+            }
+            Text("Rotation  ${current.rotation.toInt()}°", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.rotation, onValueChange = { value -> updateLayer { layer -> layer.copy(rotation = value) } }, valueRange = -180f..180f)
+            Text("Letter Spacing", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.letterSpacing, onValueChange = { value -> updateLayer { layer -> layer.copy(letterSpacing = value) } }, valueRange = -0.08f..0.5f)
+            Text("Line Spacing", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.lineSpacing, onValueChange = { value -> updateLayer { layer -> layer.copy(lineSpacing = value) } }, valueRange = 0.8f..2.5f)
+            Text("Alignment & Style", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("Left", "Center", "Right").forEach { align ->
+                    FilterChip(selected = current.alignment == align, onClick = { updateLayer { it.copy(alignment = align) } }, label = { Text(align) })
+                }
+                FilterChip(selected = current.curved, onClick = { updateLayer { it.copy(curved = !it.curved) } }, label = { Text("Curved") })
+            }
+            Text("Gradient Colors", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(
+                    "Sunset" to (android.graphics.Color.RED to android.graphics.Color.YELLOW),
+                    "Ocean" to (android.graphics.Color.CYAN to android.graphics.Color.BLUE),
+                    "Pink" to (android.graphics.Color.MAGENTA to android.graphics.Color.WHITE),
+                    "Fire" to (android.graphics.Color.YELLOW to android.graphics.Color.RED)
+                ).forEach { (name, colors) ->
+                    FilterChip(selected = current.gradientStart == colors.first && current.gradientEnd == colors.second,
+                        onClick = { updateLayer { it.copy(colorMode = "Gradient", gradientStart = colors.first, gradientEnd = colors.second) } },
+                        label = { Text(name) })
+                }
+            }
+            Text("Quick Presets", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(onClick = { updateLayer { it.copy(backgroundColor = android.graphics.Color.BLACK, backgroundAlpha = 0.72f, backgroundPadding = 14f, backgroundRadius = 16f, outline = false, shadow = true) } }, selected = false, label = { Text("Caption") })
+                FilterChip(onClick = { updateLayer { it.copy(backgroundColor = android.graphics.Color.rgb(25, 90, 170), backgroundAlpha = 0.9f, backgroundPadding = 18f, backgroundRadius = 22f, bold = true) } }, selected = false, label = { Text("Banner") })
+                FilterChip(onClick = { updateLayer { it.copy(backgroundColor = android.graphics.Color.WHITE, backgroundAlpha = 0.9f, backgroundPadding = 12f, backgroundRadius = 30f, color = android.graphics.Color.BLACK, bold = true) } }, selected = false, label = { Text("Bubble") })
             }
             Text("Drag text on the preview to place it anywhere", color = Color.Gray, fontSize = 11.sp)
             if (media.isVideo) {
