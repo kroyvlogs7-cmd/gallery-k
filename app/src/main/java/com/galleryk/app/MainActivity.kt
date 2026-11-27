@@ -963,6 +963,7 @@ MaterialTheme {
                         val selectionGridState = rememberLazyGridState()
                         val selectionScope = rememberCoroutineScope()
                         val selectionModeState = rememberUpdatedState(selectionMode)
+                        val latestSelectedUris = rememberUpdatedState(selectedUris)
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1031,7 +1032,7 @@ MaterialTheme {
                                             scrollDirection = 0
                                             dragDirection = 1
                                             lastRowStartIndex = -1
-                                            dragSelectedUris = selectedUris
+                                            dragSelectedUris = latestSelectedUris.value
                                             applyRowAt(start.y, add = true)
                                         }
                                     },
@@ -1050,22 +1051,26 @@ MaterialTheme {
                                             applyRowAt(y, add = dragDirection > 0)
                                             lastY = y
 
-                                            // Up-scroll can begin from the middle; down-scroll
-                                            // begins only in the lower 30% of the screen.
+                                            // Start auto-scroll only when the finger reaches
+                                            // the same edge zone used by the other selection grids.
+                                            val edge = 110.dp.toPx()
                                             scrollDirection = when {
-                                                y <= size.height * 0.50f -> -1
-                                                y >= size.height * 0.70f -> 1
+                                                y <= edge -> -1
+                                                y >= size.height - edge -> 1
                                                 else -> 0
                                             }
                                             if (scrollDirection != 0 && autoScrollJob?.isActive != true) {
                                                 autoScrollJob = selectionScope.launch {
                                                     while (scrollDirection != 0 && trackingSelectionDrag) {
                                                         val direction = scrollDirection
-                                                        val threshold = if (direction < 0) size.height * 0.50f else size.height * 0.70f
-                                                        val distance = if (direction < 0) threshold - lastY else lastY - threshold
-                                                        val maxDistance = if (direction < 0) threshold else size.height - threshold
-                                                        val speed = (7f + (distance / maxDistance.coerceAtLeast(1f)) * 13f)
-                                                            .coerceIn(7f, 20f)
+                                                        val edge = 110.dp.toPx()
+                                                        val distance = if (direction < 0) {
+                                                            (edge - lastY).coerceAtLeast(0f)
+                                                        } else {
+                                                            (lastY - (size.height - edge)).coerceAtLeast(0f)
+                                                        }
+                                                        val speed = (6f + (distance / edge.coerceAtLeast(1f)) * 22f)
+                                                            .coerceIn(6f, 28f)
                                                         selectionGridState.scrollBy(direction * speed)
                                                         applyRowAt(lastY, add = dragDirection > 0)
                                                         kotlinx.coroutines.delay(16L)
@@ -4129,7 +4134,15 @@ private fun PrivacyFolderScreen(
                                         if (edgeDirection != 0 && autoScrollJob?.isActive != true) {
                                             autoScrollJob = pickerScope.launch {
                                                 while (edgeDirection != 0 && trackingPickerSelection) {
-                                                    pickerGridState.scrollBy(edgeDirection * 9f)
+                                                    val edge = 110.dp.toPx()
+                                                    val distance = if (edgeDirection < 0) {
+                                                        (edge - lastY).coerceAtLeast(0f)
+                                                    } else {
+                                                        (lastY - (size.height - edge)).coerceAtLeast(0f)
+                                                    }
+                                                    val speed = (6f + (distance / edge.coerceAtLeast(1f)) * 22f)
+                                                        .coerceIn(6f, 28f)
+                                                    pickerGridState.scrollBy(edgeDirection * speed)
                                                     selectAt(lastY)
                                                     kotlinx.coroutines.delay(16L)
                                                 }
@@ -4610,7 +4623,15 @@ private fun PrivacyFolderScreen(
                                     if (privateEdgeDirection != 0 && privateAutoScrollJob?.isActive != true) {
                                         privateAutoScrollJob = privateSelectionScope.launch {
                                             while (privateEdgeDirection != 0 && trackingPrivateSelection) {
-                                                privateGridState.scrollBy(privateEdgeDirection * 9f)
+                                                val edge = 110.dp.toPx()
+                                                val distance = if (privateEdgeDirection < 0) {
+                                                    (edge - lastY).coerceAtLeast(0f)
+                                                } else {
+                                                    (lastY - (size.height - edge)).coerceAtLeast(0f)
+                                                }
+                                                val speed = (6f + (distance / edge.coerceAtLeast(1f)) * 22f)
+                                                    .coerceIn(6f, 28f)
+                                                privateGridState.scrollBy(privateEdgeDirection * speed)
                                                 selectPrivateAt(lastY)
                                                 kotlinx.coroutines.delay(16L)
                                             }
