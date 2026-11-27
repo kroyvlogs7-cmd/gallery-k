@@ -1987,7 +1987,7 @@ private fun drawGalleryTextLayer(
         val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             color = bg
             alpha = (layer.backgroundAlpha.coerceIn(0f, 1f) * 255).toInt()
-            style = android.graphics.Paint.Style.FILL
+            this.style = android.graphics.Paint.Style.FILL
         }
         canvas.drawRoundRect(
             centerX - boxWidth / 2f, centerY - boxHeight / 2f,
