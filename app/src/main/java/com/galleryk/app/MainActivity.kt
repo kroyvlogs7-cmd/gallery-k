@@ -2367,6 +2367,7 @@ private fun TextStudioScreen(
                                 .align(Alignment.Center)
                                 .offset(x = fittedWidth * (layer.x - 0.5f), y = fittedHeight * (layer.y - 0.5f))
                                 .padding(horizontal = 10.dp)
+                                .graphicsLayer { alpha = 0f }
                                 .pointerInput(layer.id, layer.text) {
                                     detectTapGestures { tap ->
                                         selectedLayerId = layer.id
@@ -2384,6 +2385,24 @@ private fun TextStudioScreen(
                             )
                         )
                     }
+
+                // Draw the visible preview text with the exact same Android Canvas
+                // renderer used when exporting the saved photo/video.
+                Canvas(Modifier.fillMaxSize()) {
+                    val nativeCanvas = drawContext.canvas.nativeCanvas
+                    val canvasWidth = size.width.toInt().coerceAtLeast(1)
+                    val canvasHeight = size.height.toInt().coerceAtLeast(1)
+                    layers.forEach { layer ->
+                        drawGalleryTextLayer(
+                            canvas = nativeCanvas,
+                            layer = layer,
+                            width = canvasWidth,
+                            height = canvasHeight,
+                            timeMs = previewPositionMs,
+                            useTiming = media.isVideo
+                        )
+                    }
+                }
             }
         }
 
