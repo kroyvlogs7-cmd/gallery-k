@@ -1920,27 +1920,57 @@ private fun drawGalleryTextLayer(
     timeMs: Long,
     useTiming: Boolean
 ) {
-    if (layer.text.isBlank()) return
+    if (layer.text.isBlank() || width <= 0 || height <= 0) return
     if (useTiming && (timeMs < layer.startMs || timeMs > layer.endMs)) return
 
     val style = (if (layer.bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL) or
         (if (layer.italic) android.graphics.Typeface.ITALIC else 0)
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = (width * layer.fontSize / 420f).coerceAtLeast(18f)
+        textSize = (width * layer.fontSize / 420f).coerceAtLeast(1f)
         textAlign = android.graphics.Paint.Align.LEFT
         typeface = android.graphics.Typeface.create(layer.fontFamily, style)
         color = layer.color
     }
     val lines = layer.text.split("\n")
-    val lineHeight = paint.textSize * 1.22f
-    val centerX = (width * layer.x).coerceIn(0f, width.toFloat())
-    val centerY = (height * layer.y).coerceIn(0f, height.toFloat())
-    val firstBaseline = centerY - (lines.size - 1) * lineHeight / 2f
+    val horizontalMargin = (width * 0.015f).coerceAtLeast(2f)
+    val verticalMargin = (height * 0.015f).coerceAtLeast(2f)
+    val maxAllowedWidth = (width - horizontalMargin * 2f).coerceAtLeast(1f)
+    val maxAllowedHeight = (height - verticalMargin * 2f).coerceAtLeast(1f)
 
+    // Fit the complete text block inside the media frame before positioning it.
+    val widestLine = lines.maxOfOrNull { paint.measureText(it) } ?: 0f
+    if (widestLine > maxAllowedWidth && widestLine > 0f) {
+        paint.textSize *= maxAllowedWidth / widestLine
+    }
+    var lineHeight = paint.textSize * 1.22f
+    var metrics = paint.fontMetrics
+    var blockHeight = (lines.size - 1) * lineHeight + (metrics.descent - metrics.ascent)
+    if (blockHeight > maxAllowedHeight && blockHeight > 0f) {
+        paint.textSize *= maxAllowedHeight / blockHeight
+        lineHeight = paint.textSize * 1.22f
+        metrics = paint.fontMetrics
+        blockHeight = (lines.size - 1) * lineHeight + (metrics.descent - metrics.ascent)
+    }
+
+    val lineWidths = lines.map { paint.measureText(it) }
+    val maxLineWidth = lineWidths.maxOrNull() ?: 0f
+    val centerX = (width * layer.x).coerceIn(
+        horizontalMargin + maxLineWidth / 2f,
+        (width - horizontalMargin - maxLineWidth / 2f).coerceAtLeast(horizontalMargin + maxLineWidth / 2f)
+    )
+    val centerY = (height * layer.y).coerceIn(
+        verticalMargin + blockHeight / 2f,
+        (height - verticalMargin - blockHeight / 2f).coerceAtLeast(verticalMargin + blockHeight / 2f)
+    )
+    val firstBaseline = centerY - (lines.size - 1) * lineHeight / 2f -
+        (metrics.ascent + metrics.descent) / 2f
+
+    val saveCount = canvas.save()
+    canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
     var globalCharIndex = 0
     lines.forEachIndexed { lineIndex, line ->
         val baseline = firstBaseline + lineIndex * lineHeight
-        val lineWidth = paint.measureText(line)
+        val lineWidth = lineWidths[lineIndex]
         if (layer.colorMode == "Letters") {
             var x = centerX - lineWidth / 2f
             line.forEachIndexed { charIndex, character ->
@@ -1953,7 +1983,7 @@ private fun drawGalleryTextLayer(
                 if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
                 if (layer.outline) {
                     paint.style = android.graphics.Paint.Style.STROKE
-                    paint.strokeWidth = (paint.textSize * 0.075f).coerceAtLeast(2f)
+                    paint.strokeWidth = (paint.textSize * 0.075f).coerceAtLeast(1f)
                     paint.color = android.graphics.Color.BLACK
                     canvas.drawText(charText, x, baseline, paint)
                     paint.style = android.graphics.Paint.Style.FILL
@@ -1980,7 +2010,7 @@ private fun drawGalleryTextLayer(
             if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
             if (layer.outline) {
                 paint.style = android.graphics.Paint.Style.STROKE
-                paint.strokeWidth = (paint.textSize * 0.075f).coerceAtLeast(2f)
+                paint.strokeWidth = (paint.textSize * 0.075f).coerceAtLeast(1f)
                 paint.color = android.graphics.Color.BLACK
                 canvas.drawText(line, centerX - lineWidth / 2f, baseline, paint)
                 paint.style = android.graphics.Paint.Style.FILL
@@ -1993,8 +2023,8 @@ private fun drawGalleryTextLayer(
         }
         globalCharIndex += line.length + 1
     }
+    canvas.restoreToCount(saveCount)
 }
-
 @OptIn(UnstableApi::class)
 private class GalleryTimedTextOverlay(
     private val layers: List<GalleryTextLayer>
