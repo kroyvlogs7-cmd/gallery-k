@@ -2305,7 +2305,21 @@ private fun TextStudioScreen(
             val fittedHeight = with(density) { fittedHeightPx.toDp() }
 
             Box(
-                Modifier.width(fittedWidth).height(fittedHeight),
+                Modifier.width(fittedWidth).height(fittedHeight)
+                    .pointerInput(selectedLayerId, fittedWidthPx, fittedHeightPx) {
+                        detectTransformGestures { _, pan, zoomChange, _ ->
+                            val activeId = selectedLayerId
+                            val index = layers.indexOfFirst { it.id == activeId }
+                            if (index >= 0) {
+                                val old = layers[index]
+                                layers[index] = old.copy(
+                                    x = (old.x + pan.x / fittedWidthPx).coerceIn(0f, 1f),
+                                    y = (old.y + pan.y / fittedHeightPx).coerceIn(0f, 1f),
+                                    fontSize = (old.fontSize * zoomChange).coerceAtLeast(1f)
+                                )
+                            }
+                        }
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 if (media.isVideo && player != null) {
@@ -2335,7 +2349,7 @@ private fun TextStudioScreen(
                     .forEach { layer ->
                         var textLayout by remember(layer.id) { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
                         val previewFontSize = (layer.fontSize * fittedWidthPx / 420f / density.density)
-                            .coerceAtLeast(18f / density.density)
+                            .coerceAtLeast(1f / density.density)
                         Text(
                             text = buildGalleryPreviewText(layer),
                             color = Color(layer.color),
@@ -2360,20 +2374,7 @@ private fun TextStudioScreen(
                                         if (index != null && index in layer.text.indices) selectedCharacterIndex = index
                                     }
                                 }
-                                .pointerInput(layer.id, fittedWidthPx, fittedHeightPx) {
-                                    detectTransformGestures { _, pan, zoomChange, _ ->
-                                        selectedLayerId = layer.id
-                                        val index = layers.indexOfFirst { it.id == layer.id }
-                                        if (index >= 0) {
-                                            val old = layers[index]
-                                            layers[index] = old.copy(
-                                                x = (old.x + pan.x / fittedWidthPx).coerceIn(0f, 1f),
-                                                y = (old.y + pan.y / fittedHeightPx).coerceIn(0f, 1f),
-                                                fontSize = (old.fontSize * zoomChange).coerceAtLeast(1f)
-                                            )
-                                        }
-                                    }
-                                },
+                                ,
                             style = androidx.compose.ui.text.TextStyle(
                                 shadow = if (layer.shadow) androidx.compose.ui.graphics.Shadow(
                                     color = Color.Black,
@@ -2496,8 +2497,7 @@ private fun TextStudioScreen(
                     )
                 }
             }
-            Text("Font Size  ${current.fontSize.toInt()}", color = Color.White)
-            Text("Pinch with two fingers on the text to resize; drag with one finger to move", color = Color.Gray, fontSize = 11.sp)
+            Text("Use two fingers to resize text; drag with one finger to move", color = Color.Gray, fontSize = 11.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = current.bold, onClick = { updateLayer { it.copy(bold = !it.bold) } }, label = { Text("Bold") })
                 FilterChip(selected = current.italic, onClick = { updateLayer { it.copy(italic = !it.italic) } }, label = { Text("Italic") })
