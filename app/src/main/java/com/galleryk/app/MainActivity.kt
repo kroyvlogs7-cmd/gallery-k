@@ -1845,16 +1845,40 @@ private data class GalleryTextLayer(
     val fontFamily: String = "sans-serif"
 )
 
-private val galleryTextPalette = listOf(
-    android.graphics.Color.WHITE,
-    android.graphics.Color.RED,
-    android.graphics.Color.YELLOW,
-    android.graphics.Color.GREEN,
-    android.graphics.Color.CYAN,
-    android.graphics.Color.BLUE,
-    android.graphics.Color.MAGENTA,
-    android.graphics.Color.rgb(255, 145, 0)
-)
+private val galleryTextPalette = buildList {
+    // Main colors first, followed by their lighter and darker shades.
+    addAll(listOf(
+        android.graphics.Color.RED,
+        android.graphics.Color.GREEN,
+        android.graphics.Color.BLUE,
+        android.graphics.Color.MAGENTA,
+        android.graphics.Color.YELLOW,
+        android.graphics.Color.rgb(255, 145, 0),
+        android.graphics.Color.CYAN,
+        android.graphics.Color.WHITE,
+        android.graphics.Color.BLACK,
+        android.graphics.Color.DKGRAY,
+        android.graphics.Color.GRAY,
+        android.graphics.Color.LTGRAY
+    ))
+
+    // Multiple saturation and brightness levels for a wide range of colors.
+    val hues = floatArrayOf(0f, 25f, 45f, 60f, 90f, 120f, 150f, 180f, 210f, 240f, 270f, 300f, 330f)
+    val saturations = floatArrayOf(1f, 0.75f, 0.5f, 0.3f)
+    val values = floatArrayOf(1f, 0.85f, 0.7f, 0.55f, 0.4f)
+    hues.forEach { hue ->
+        saturations.forEach { saturation ->
+            values.forEach { brightness ->
+                add(android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, brightness)))
+            }
+        }
+    }
+
+    // Neutral shades from near-white through charcoal and black.
+    for (level in 240 downTo 16 step 8) {
+        add(android.graphics.Color.rgb(level, level, level))
+    }
+}
 
 private fun buildGalleryPreviewText(layer: GalleryTextLayer): androidx.compose.ui.text.AnnotatedString =
     androidx.compose.ui.text.buildAnnotatedString {
@@ -2360,7 +2384,19 @@ private fun TextStudioScreen(
             }
             OutlinedTextField(
                 value = current.text,
-                onValueChange = { value -> updateLayer { it.copy(text = value) } },
+                onValueChange = { value ->
+                    val oldText = current.text
+                    var changedIndex = 0
+                    while (changedIndex < oldText.length && changedIndex < value.length &&
+                        oldText[changedIndex] == value[changedIndex]) {
+                        changedIndex++
+                    }
+                    updateLayer { it.copy(text = value) }
+                    val nextLetter = value.indices.firstOrNull {
+                        it >= changedIndex && !value[it].isWhitespace()
+                    } ?: value.indices.lastOrNull { !value[it].isWhitespace() }
+                    selectedCharacterIndex = nextLetter ?: 0
+                },
                 label = { Text("Write your text") },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 1,
@@ -2391,7 +2427,11 @@ private fun TextStudioScreen(
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Keep every color swatch on one horizontally scrollable row.
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 galleryTextPalette.forEach { color ->
                     Box(
                         Modifier.size(30.dp).clip(RoundedCornerShape(50))
