@@ -1835,6 +1835,10 @@ private data class GalleryTextLayer(
     val bold: Boolean = true,
     val italic: Boolean = false,
     val shadow: Boolean = true,
+    val shadowColor: Int = android.graphics.Color.BLACK,
+    val shadowBlur: Float = 5f,
+    val shadowDx: Float = 2f,
+    val shadowDy: Float = 3f,
     val outline: Boolean = false,
     val colorMode: String = "Single",
     val letterColors: Map<Int, Int> = emptyMap(),
@@ -1856,6 +1860,7 @@ private data class GalleryTextLayer(
     val lineSpacing: Float = 1.22f,
     val alignment: String = "Center",
     val curved: Boolean = false,
+    val curveAmount: Float = 130f,
     val gradientStart: Int = android.graphics.Color.RED,
     val gradientEnd: Int = android.graphics.Color.YELLOW
 )
@@ -2014,7 +2019,7 @@ private fun drawGalleryTextLayer(
             path.addArc(
                 centerX - radius, centerY - radius * 0.55f,
                 centerX + radius, centerY + radius * 1.45f,
-                205f, 130f
+                205f - (layer.curveAmount.coerceIn(30f, 240f) - 130f) / 2f, layer.curveAmount.coerceIn(30f, 240f)
             )
             paint.style = android.graphics.Paint.Style.FILL
             paint.color = lineColor
@@ -2022,7 +2027,7 @@ private fun drawGalleryTextLayer(
                 centerX - lineWidth / 2f, baseline, centerX + lineWidth / 2f, baseline,
                 layer.gradientStart, layer.gradientEnd, android.graphics.Shader.TileMode.CLAMP
             ) else null
-            if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
+            if (layer.shadow) paint.setShadowLayer(layer.shadowBlur.coerceIn(0f, 40f) * (width / 420f), layer.shadowDx * (width / 420f), layer.shadowDy * (width / 420f), layer.shadowColor)
             if (layer.outline) {
                 paint.style = android.graphics.Paint.Style.STROKE
                 paint.strokeWidth = layer.strokeWidth.coerceIn(0.5f, 20f) * (width / 420f)
@@ -2043,7 +2048,7 @@ private fun drawGalleryTextLayer(
                 paint.shader = null
                 paint.style = android.graphics.Paint.Style.FILL
                 paint.color = charColor
-                if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
+                if (layer.shadow) paint.setShadowLayer(layer.shadowBlur.coerceIn(0f, 40f) * (width / 420f), layer.shadowDx * (width / 420f), layer.shadowDy * (width / 420f), layer.shadowColor)
                 if (layer.outline) {
                     paint.style = android.graphics.Paint.Style.STROKE
                     paint.strokeWidth = layer.strokeWidth.coerceIn(0.5f, 20f) * (width / 420f)
@@ -2062,7 +2067,7 @@ private fun drawGalleryTextLayer(
                 startX, baseline - paint.textSize, startX + lineWidth, baseline,
                 layer.gradientStart, layer.gradientEnd, android.graphics.Shader.TileMode.CLAMP
             ) else null
-            if (layer.shadow) paint.setShadowLayer(paint.textSize * 0.10f, 2f, 3f, android.graphics.Color.BLACK)
+            if (layer.shadow) paint.setShadowLayer(layer.shadowBlur.coerceIn(0f, 40f) * (width / 420f), layer.shadowDx * (width / 420f), layer.shadowDy * (width / 420f), layer.shadowColor)
             if (layer.outline) {
                 paint.style = android.graphics.Paint.Style.STROKE
                 paint.strokeWidth = layer.strokeWidth.coerceIn(0.5f, 20f) * (width / 420f)
@@ -2174,6 +2179,7 @@ private fun TextStudioScreen(
     var nextLayerId by remember(media.uri) { mutableIntStateOf(2) }
     var selectedCharacterIndex by remember(media.uri) { mutableIntStateOf(0) }
     var selectedLineIndex by remember(media.uri) { mutableIntStateOf(0) }
+    var colorEditTarget by remember(media.uri) { mutableStateOf("Text") }
     val undoHistory = remember(media.uri) { mutableStateListOf<List<GalleryTextLayer>>() }
     val redoHistory = remember(media.uri) { mutableStateListOf<List<GalleryTextLayer>>() }
     fun saveHistory() {
@@ -2574,7 +2580,13 @@ private fun TextStudioScreen(
                     )
                 }
             }
-            Text("Text Color", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text("Color Picker — ${colorEditTarget}", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = { colorEditTarget = "Text" }) { Text("Text Color") }
+                OutlinedButton(onClick = { colorEditTarget = "Background" }) { Text("Background") }
+                OutlinedButton(onClick = { colorEditTarget = "Stroke" }) { Text("Stroke") }
+                OutlinedButton(onClick = { colorEditTarget = "Shadow" }) { Text("Shadow") }
+            }
             // Keep the existing color palette above the text entry field.
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -2585,18 +2597,17 @@ private fun TextStudioScreen(
                         Modifier.size(30.dp).clip(RoundedCornerShape(50))
                             .background(Color(color))
                             .clickable {
-                                when (current.colorMode) {
-                                    "Letters" -> {
-                                        if (selectedCharacterIndex in current.text.indices) {
-                                            updateLayer { it.copy(letterColors = it.letterColors + (selectedCharacterIndex to color)) }
-                                        }
+                                when (colorEditTarget) {
+                                    "Background" -> updateLayer { it.copy(backgroundColor = color) }
+                                    "Stroke" -> updateLayer { it.copy(strokeColor = color) }
+                                    "Shadow" -> updateLayer { it.copy(shadowColor = color) }
+                                    "Gradient Start" -> updateLayer { it.copy(colorMode = "Gradient", gradientStart = color) }
+                                    "Gradient End" -> updateLayer { it.copy(colorMode = "Gradient", gradientEnd = color) }
+                                    else -> when (current.colorMode) {
+                                        "Letters" -> if (selectedCharacterIndex in current.text.indices) updateLayer { it.copy(letterColors = it.letterColors + (selectedCharacterIndex to color)) }
+                                        "Lines" -> if (selectedLineIndex in current.text.split("\\n").indices) updateLayer { it.copy(lineColors = it.lineColors + (selectedLineIndex to color)) }
+                                        else -> updateLayer { it.copy(color = color) }
                                     }
-                                    "Lines" -> {
-                                        if (selectedLineIndex in current.text.split("\\n").indices) {
-                                            updateLayer { it.copy(lineColors = it.lineColors + (selectedLineIndex to color)) }
-                                        }
-                                    }
-                                    else -> updateLayer { it.copy(color = color) }
                                 }
                             }
                     )
@@ -2668,6 +2679,14 @@ private fun TextStudioScreen(
                 FilterChip(selected = current.shadow, onClick = { updateLayer { it.copy(shadow = !it.shadow) } }, label = { Text("Shadow") })
                 FilterChip(selected = current.outline, onClick = { updateLayer { it.copy(outline = !it.outline) } }, label = { Text("Outline") })
             }
+            Text("Shadow Controls", color = Color.White, fontWeight = FontWeight.SemiBold)
+            TextButton(onClick = { colorEditTarget = "Shadow" }) { Text(if (colorEditTarget == "Shadow") "Selecting Shadow Color" else "Choose Shadow Color") }
+            Text("Shadow Blur  ${current.shadowBlur.toInt()}", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.shadowBlur, onValueChange = { v -> updateLayer { it.copy(shadowBlur = v) } }, valueRange = 0f..40f)
+            Text("Shadow Horizontal  ${current.shadowDx.toInt()}", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.shadowDx, onValueChange = { v -> updateLayer { it.copy(shadowDx = v) } }, valueRange = -30f..30f)
+            Text("Shadow Vertical  ${current.shadowDy.toInt()}", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.shadowDy, onValueChange = { v -> updateLayer { it.copy(shadowDy = v) } }, valueRange = -30f..30f)
             Text("Text Tools", color = Color.White, fontWeight = FontWeight.SemiBold)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedButton(onClick = {
@@ -2693,6 +2712,8 @@ private fun TextStudioScreen(
                     FilterChip(selected = current.backgroundColor == value, onClick = { updateLayer { it.copy(backgroundColor = value) } }, label = { Text(name) })
                 }
             }
+            Text("Background Color Picker", color = Color.LightGray, fontSize = 12.sp)
+            TextButton(onClick = { colorEditTarget = "Background" }) { Text(if (colorEditTarget == "Background") "Selecting Background Color" else "Choose Background Color") }
             Text("Background Opacity  ${(current.backgroundAlpha * 100).toInt()}%", color = Color.LightGray, fontSize = 12.sp)
             Slider(value = current.backgroundAlpha, onValueChange = { value -> updateLayer { layer -> layer.copy(backgroundAlpha = value) } }, valueRange = 0f..1f)
             Text("Background Padding  ${current.backgroundPadding.toInt()}", color = Color.LightGray, fontSize = 12.sp)
@@ -2705,11 +2726,7 @@ private fun TextStudioScreen(
             Slider(value = current.textAlpha, onValueChange = { value -> updateLayer { layer -> layer.copy(textAlpha = value) } }, valueRange = 0f..1f)
             Text("Outline Width  ${current.strokeWidth.toInt()}", color = Color.LightGray, fontSize = 12.sp)
             Slider(value = current.strokeWidth, onValueChange = { value -> updateLayer { layer -> layer.copy(strokeWidth = value) } }, valueRange = 0.5f..12f)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("Black" to android.graphics.Color.BLACK, "White" to android.graphics.Color.WHITE, "Red" to android.graphics.Color.RED, "Blue" to android.graphics.Color.BLUE).forEach { (name, value) ->
-                    FilterChip(selected = current.strokeColor == value, onClick = { updateLayer { it.copy(strokeColor = value) } }, label = { Text(name) })
-                }
-            }
+            TextButton(onClick = { colorEditTarget = "Stroke" }) { Text(if (colorEditTarget == "Stroke") "Selecting Stroke Color" else "Choose Stroke Color") }
             Text("Rotation  ${current.rotation.toInt()}°", color = Color.LightGray, fontSize = 12.sp)
             Slider(value = current.rotation, onValueChange = { value -> updateLayer { layer -> layer.copy(rotation = value) } }, valueRange = -180f..180f)
             Text("Letter Spacing", color = Color.LightGray, fontSize = 12.sp)
@@ -2723,7 +2740,13 @@ private fun TextStudioScreen(
                 }
                 FilterChip(selected = current.curved, onClick = { updateLayer { it.copy(curved = !it.curved) } }, label = { Text("Curved") })
             }
+            Text("Curve Amount  ${current.curveAmount.toInt()}°", color = Color.LightGray, fontSize = 12.sp)
+            Slider(value = current.curveAmount, onValueChange = { v -> updateLayer { it.copy(curveAmount = v) } }, valueRange = 30f..240f)
             Text("Gradient Colors", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = { colorEditTarget = "Gradient Start" }) { Text("Start: ${if (colorEditTarget == "Gradient Start") "Choose" else "Edit"}") }
+                OutlinedButton(onClick = { colorEditTarget = "Gradient End" }) { Text("End: ${if (colorEditTarget == "Gradient End") "Choose" else "Edit"}") }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(
                     "Sunset" to (android.graphics.Color.RED to android.graphics.Color.YELLOW),
