@@ -1850,7 +1850,7 @@ private data class GalleryTextLayer(
     val fontFamily: String = "sans-serif",
     val backgroundColor: Int? = null,
     val backgroundAlpha: Float = 0.75f,
-    val backgroundPadding: Float = 12f,
+    val backgroundPadding: Float = 0f,
     val backgroundRadius: Float = 14f,
     val strokeColor: Int = android.graphics.Color.BLACK,
     val strokeWidth: Float = 3f,
@@ -2437,7 +2437,7 @@ private fun TextStudioScreen(
             Box(
                 Modifier.width(fittedWidth).height(fittedHeight)
                     .pointerInput(selectedLayerId, fittedWidthPx, fittedHeightPx) {
-                        detectTransformGestures { _, pan, zoomChange, _ ->
+                        detectTransformGestures { _, pan, zoomChange, rotationChange ->
                             val activeId = selectedLayerId
                             val index = layers.indexOfFirst { it.id == activeId }
                             if (index >= 0) {
@@ -2445,7 +2445,8 @@ private fun TextStudioScreen(
                                 layers[index] = old.copy(
                                     x = (old.x + pan.x / fittedWidthPx).coerceIn(0f, 1f),
                                     y = (old.y + pan.y / fittedHeightPx).coerceIn(0f, 1f),
-                                    fontSize = (old.fontSize * zoomChange).coerceAtLeast(1f)
+                                    fontSize = (old.fontSize * zoomChange).coerceAtLeast(1f),
+                                    rotation = (old.rotation + rotationChange).coerceIn(-180f, 180f)
                                 )
                             }
                         }
@@ -2672,7 +2673,7 @@ private fun TextStudioScreen(
                     )
                 }
             }
-            Text("Use two fingers to resize text; drag with one finger to move", color = Color.Gray, fontSize = 11.sp)
+            Text("Drag with one finger to move; pinch to resize and twist two fingers to rotate", color = Color.Gray, fontSize = 11.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = current.bold, onClick = { updateLayer { it.copy(bold = !it.bold) } }, label = { Text("Bold") })
                 FilterChip(selected = current.italic, onClick = { updateLayer { it.copy(italic = !it.italic) } }, label = { Text("Italic") })
@@ -2716,8 +2717,6 @@ private fun TextStudioScreen(
             TextButton(onClick = { colorEditTarget = "Background" }) { Text(if (colorEditTarget == "Background") "Selecting Background Color" else "Choose Background Color") }
             Text("Background Opacity  ${(current.backgroundAlpha * 100).toInt()}%", color = Color.LightGray, fontSize = 12.sp)
             Slider(value = current.backgroundAlpha, onValueChange = { value -> updateLayer { layer -> layer.copy(backgroundAlpha = value) } }, valueRange = 0f..1f)
-            Text("Background Padding  ${current.backgroundPadding.toInt()}", color = Color.LightGray, fontSize = 12.sp)
-            Slider(value = current.backgroundPadding, onValueChange = { value -> updateLayer { layer -> layer.copy(backgroundPadding = value) } }, valueRange = 0f..40f)
             Text("Corner Radius  ${current.backgroundRadius.toInt()}", color = Color.LightGray, fontSize = 12.sp)
             Slider(value = current.backgroundRadius, onValueChange = { value -> updateLayer { layer -> layer.copy(backgroundRadius = value) } }, valueRange = 0f..40f)
             Text("Font Size  ${current.fontSize.toInt()}", color = Color.LightGray, fontSize = 12.sp)
@@ -2727,8 +2726,6 @@ private fun TextStudioScreen(
             Text("Outline Width  ${current.strokeWidth.toInt()}", color = Color.LightGray, fontSize = 12.sp)
             Slider(value = current.strokeWidth, onValueChange = { value -> updateLayer { layer -> layer.copy(strokeWidth = value) } }, valueRange = 0.5f..12f)
             TextButton(onClick = { colorEditTarget = "Stroke" }) { Text(if (colorEditTarget == "Stroke") "Selecting Stroke Color" else "Choose Stroke Color") }
-            Text("Rotation  ${current.rotation.toInt()}°", color = Color.LightGray, fontSize = 12.sp)
-            Slider(value = current.rotation, onValueChange = { value -> updateLayer { layer -> layer.copy(rotation = value) } }, valueRange = -180f..180f)
             Text("Letter Spacing", color = Color.LightGray, fontSize = 12.sp)
             Slider(value = current.letterSpacing, onValueChange = { value -> updateLayer { layer -> layer.copy(letterSpacing = value) } }, valueRange = -0.08f..0.5f)
             Text("Line Spacing", color = Color.LightGray, fontSize = 12.sp)
@@ -2761,9 +2758,9 @@ private fun TextStudioScreen(
             }
             Text("Quick Presets", color = Color.White, fontWeight = FontWeight.SemiBold)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(onClick = { updateLayer { it.copy(backgroundColor = android.graphics.Color.BLACK, backgroundAlpha = 0.72f, backgroundPadding = 14f, backgroundRadius = 16f, outline = false, shadow = true) } }, selected = false, label = { Text("Caption") })
-                FilterChip(onClick = { updateLayer { it.copy(backgroundColor = android.graphics.Color.rgb(25, 90, 170), backgroundAlpha = 0.9f, backgroundPadding = 18f, backgroundRadius = 22f, bold = true) } }, selected = false, label = { Text("Banner") })
-                FilterChip(onClick = { updateLayer { it.copy(backgroundColor = android.graphics.Color.WHITE, backgroundAlpha = 0.9f, backgroundPadding = 12f, backgroundRadius = 30f, color = android.graphics.Color.BLACK, bold = true) } }, selected = false, label = { Text("Bubble") })
+                FilterChip(onClick = { updateLayer { it.copy(backgroundColor = android.graphics.Color.BLACK, backgroundAlpha = 0.72f, backgroundPadding = 0f, backgroundRadius = 16f, outline = false, shadow = true) } }, selected = false, label = { Text("Caption") })
+                FilterChip(onClick = { updateLayer { it.copy(backgroundColor = android.graphics.Color.rgb(25, 90, 170), backgroundAlpha = 0.9f, backgroundPadding = 0f, backgroundRadius = 22f, bold = true) } }, selected = false, label = { Text("Banner") })
+                FilterChip(onClick = { updateLayer { it.copy(backgroundColor = android.graphics.Color.WHITE, backgroundAlpha = 0.9f, backgroundPadding = 0f, backgroundRadius = 30f, color = android.graphics.Color.BLACK, bold = true) } }, selected = false, label = { Text("Bubble") })
             }
             Text("Drag text on the preview to place it anywhere", color = Color.Gray, fontSize = 11.sp)
             if (media.isVideo) {
