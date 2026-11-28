@@ -1952,10 +1952,10 @@ private fun drawGalleryTextLayer(
         alpha = (layer.textAlpha.coerceIn(0f, 1f) * 255).toInt()
     }
     val lines = layer.text.split("\n")
-    val horizontalMargin = (width * 0.015f).coerceAtLeast(2f)
-    val verticalMargin = (height * 0.015f).coerceAtLeast(2f)
-    val maxAllowedWidth = (width - horizontalMargin * 2f).coerceAtLeast(1f)
-    val maxAllowedHeight = (height - verticalMargin * 2f).coerceAtLeast(1f)
+    // Let the text use the full media dimensions. Positioning is clamped
+    // to the image edges below, not to an artificial inner safe area.
+    val maxAllowedWidth = width.toFloat().coerceAtLeast(1f)
+    val maxAllowedHeight = height.toFloat().coerceAtLeast(1f)
     fun measuredLine(text: String): Float {
         val base = paint.measureText(text)
         return (base + (text.length - 1).coerceAtLeast(0) * paint.textSize * layer.letterSpacing).coerceAtLeast(0f)
@@ -1974,16 +1974,13 @@ private fun drawGalleryTextLayer(
     val lineWidths = lines.map { measuredLine(it) }
     val maxLineWidth = lineWidths.maxOrNull() ?: 0f
     val pad = layer.backgroundPadding.coerceIn(0f, width * 0.08f) * (width / 420f)
-    val boxWidth = (maxLineWidth + pad * 2f).coerceAtMost(width - horizontalMargin * 2f)
-    val boxHeight = (blockHeight + pad * 2f).coerceAtMost(height - verticalMargin * 2f)
-    val centerX = (width * layer.x).coerceIn(
-        horizontalMargin + boxWidth / 2f,
-        (width - horizontalMargin - boxWidth / 2f).coerceAtLeast(horizontalMargin + boxWidth / 2f)
-    )
-    val centerY = (height * layer.y).coerceIn(
-        verticalMargin + boxHeight / 2f,
-        (height - verticalMargin - boxHeight / 2f).coerceAtLeast(verticalMargin + boxHeight / 2f)
-    )
+    val boxWidth = (maxLineWidth + pad * 2f).coerceAtMost(width.toFloat())
+    val boxHeight = (blockHeight + pad * 2f).coerceAtMost(height.toFloat())
+    // x/y represent the text block's CENTER as a fraction of the full image.
+    // Do not clamp by half the text width/height: that was stopping the text
+    // before it could reach the left, right, top, and bottom image edges.
+    val centerX = (width * layer.x).coerceIn(0f, width.toFloat())
+    val centerY = (height * layer.y).coerceIn(0f, height.toFloat())
     val saveCount = canvas.save()
     canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
     canvas.rotate(layer.rotation.coerceIn(-180f, 180f), centerX, centerY)
