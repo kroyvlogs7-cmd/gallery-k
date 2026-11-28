@@ -2499,13 +2499,6 @@ private fun TextStudioScreen(
                                 .offset(x = fittedWidth * (layer.x - 0.5f), y = fittedHeight * (layer.y - 0.5f))
                                 .padding(horizontal = 10.dp)
                                 .graphicsLayer { alpha = 0f }
-                                .pointerInput(layer.id, layer.text) {
-                                    detectTapGestures { tap ->
-                                        selectedLayerId = layer.id
-                                        val index = textLayout?.getOffsetForPosition(tap)
-                                        if (index != null && index in layer.text.indices) selectedCharacterIndex = index
-                                    }
-                                }
                                 ,
                             style = androidx.compose.ui.text.TextStyle(
                                 shadow = if (layer.shadow) androidx.compose.ui.graphics.Shadow(
@@ -2588,6 +2581,23 @@ private fun TextStudioScreen(
                 OutlinedButton(onClick = { colorEditTarget = "Stroke" }) { Text("Stroke") }
                 OutlinedButton(onClick = { colorEditTarget = "Shadow" }) { Text("Shadow") }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (current.color != android.graphics.Color.WHITE || current.letterColors.isNotEmpty() || current.lineColors.isNotEmpty()) {
+                    TextButton(onClick = {
+                        updateLayer { it.copy(color = android.graphics.Color.WHITE, letterColors = emptyMap(), lineColors = emptyMap(), colorMode = "Single") }
+                    }) { Text("✕ Reset Text Color", color = Color(0xFFFF8A8A)) }
+                }
+                if (current.strokeWidth > 0.5f) {
+                    TextButton(onClick = { updateLayer { it.copy(outline = false, strokeWidth = 0.5f) } }) {
+                        Text("✕ Remove Stroke", color = Color(0xFFFF8A8A))
+                    }
+                }
+                if (current.shadow) {
+                    TextButton(onClick = { updateLayer { it.copy(shadow = false) } }) {
+                        Text("✕ Remove Shadow", color = Color(0xFFFF8A8A))
+                    }
+                }
+            }
             // Keep the existing color palette above the text entry field.
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -2668,17 +2678,23 @@ private fun TextStudioScreen(
                 listOf("Single", "Letters", "Lines", "Gradient").forEach { mode ->
                     FilterChip(
                         selected = current.colorMode == mode,
-                        onClick = { updateLayer { it.copy(colorMode = mode) } },
-                        label = { Text(mode) }
+                        onClick = {
+                            updateLayer {
+                                if (it.colorMode == mode && mode != "Single") {
+                                    it.copy(colorMode = "Single", letterColors = emptyMap(), lineColors = emptyMap())
+                                } else it.copy(colorMode = mode)
+                            }
+                        },
+                        label = { Text(if (current.colorMode == mode && mode != "Single") "$mode  ✕" else mode) }
                     )
                 }
             }
-            Text("Drag with one finger to move; pinch to resize and twist two fingers to rotate", color = Color.Gray, fontSize = 11.sp)
+            Text("Drag text left, right, up or down. Pinch to resize; twist two fingers to rotate.", color = Color.Gray, fontSize = 11.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = current.bold, onClick = { updateLayer { it.copy(bold = !it.bold) } }, label = { Text("Bold") })
-                FilterChip(selected = current.italic, onClick = { updateLayer { it.copy(italic = !it.italic) } }, label = { Text("Italic") })
-                FilterChip(selected = current.shadow, onClick = { updateLayer { it.copy(shadow = !it.shadow) } }, label = { Text("Shadow") })
-                FilterChip(selected = current.outline, onClick = { updateLayer { it.copy(outline = !it.outline) } }, label = { Text("Outline") })
+                FilterChip(selected = current.bold, onClick = { updateLayer { it.copy(bold = !it.bold) } }, label = { Text(if (current.bold) "Bold  ✕" else "Bold") })
+                FilterChip(selected = current.italic, onClick = { updateLayer { it.copy(italic = !it.italic) } }, label = { Text(if (current.italic) "Italic  ✕" else "Italic") })
+                FilterChip(selected = current.shadow, onClick = { updateLayer { it.copy(shadow = !it.shadow) } }, label = { Text(if (current.shadow) "Shadow  ✕" else "Shadow") })
+                FilterChip(selected = current.outline, onClick = { updateLayer { it.copy(outline = !it.outline) } }, label = { Text(if (current.outline) "Outline  ✕" else "Outline") })
             }
             Text("Shadow Controls", color = Color.White, fontWeight = FontWeight.SemiBold)
             TextButton(onClick = { colorEditTarget = "Shadow" }) { Text(if (colorEditTarget == "Shadow") "Selecting Shadow Color" else "Choose Shadow Color") }
@@ -2706,7 +2722,14 @@ private fun TextStudioScreen(
                     if (i > 0) { val item = layers.removeAt(i); layers.add(i - 1, item) }
                 }) { Text("Send Back") }
             }
-            Text("Background", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Background", color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                if (current.backgroundColor != null) {
+                    TextButton(onClick = { updateLayer { it.copy(backgroundColor = null) } }) {
+                        Text("✕ Remove", color = Color(0xFFFF8A8A))
+                    }
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(selected = current.backgroundColor == null, onClick = { updateLayer { it.copy(backgroundColor = null) } }, label = { Text("None") })
                 listOf("Black" to android.graphics.Color.BLACK, "White" to android.graphics.Color.WHITE, "Blue" to android.graphics.Color.rgb(35, 95, 180), "Red" to android.graphics.Color.RED).forEach { (name, value) ->
