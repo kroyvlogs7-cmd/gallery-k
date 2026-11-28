@@ -1952,35 +1952,42 @@ private fun drawGalleryTextLayer(
         alpha = (layer.textAlpha.coerceIn(0f, 1f) * 255).toInt()
     }
     val lines = layer.text.split("\n")
-    // Let the text use the full media dimensions. Positioning is clamped
-    // to the image edges below, not to an artificial inner safe area.
-    val maxAllowedWidth = width.toFloat().coerceAtLeast(1f)
-    val maxAllowedHeight = height.toFloat().coerceAtLeast(1f)
+    // Keep the layer's anchor fixed while fitting its full rotated bounds inside the photo.
+    // A tiny safety inset prevents anti-aliased edges/strokes from being clipped.
+    val edgeInset = maxOf(1f, minOf(width, height) * 0.002f)
+    val centerX = (width * layer.x).coerceIn(0f, width.toFloat())
+    val centerY = (height * layer.y).coerceIn(0f, height.toFloat())
     fun measuredLine(text: String): Float {
         val base = paint.measureText(text)
         return (base + (text.length - 1).coerceAtLeast(0) * paint.textSize * layer.letterSpacing).coerceAtLeast(0f)
     }
-    val widestLine = lines.maxOfOrNull { measuredLine(it) } ?: 0f
-    if (widestLine > maxAllowedWidth && widestLine > 0f) paint.textSize *= maxAllowedWidth / widestLine
-    var lineHeight = paint.textSize * layer.lineSpacing.coerceIn(0.8f, 2.5f)
-    var metrics = paint.fontMetrics
-    var blockHeight = (lines.size - 1) * lineHeight + (metrics.descent - metrics.ascent)
-    if (blockHeight > maxAllowedHeight && blockHeight > 0f) {
-        paint.textSize *= maxAllowedHeight / blockHeight
-        lineHeight = paint.textSize * layer.lineSpacing.coerceIn(0.8f, 2.5f)
-        metrics = paint.fontMetrics
-        blockHeight = (lines.size - 1) * lineHeight + (metrics.descent - metrics.ascent)
-    }
+    val lineSpacing = layer.lineSpacing.coerceIn(0.8f, 2.5f)
+    val initialWidths = lines.map { measuredLine(it) }
+    val initialWidth = (initialWidths.maxOrNull() ?: 0f) +
+        layer.backgroundPadding.coerceIn(0f, width * 0.08f) * (width / 420f) * 2f
+    val initialMetrics = paint.fontMetrics
+    val initialHeight = (lines.size - 1) * paint.textSize * lineSpacing +
+        (initialMetrics.descent - initialMetrics.ascent) +
+        layer.backgroundPadding.coerceIn(0f, width * 0.08f) * (width / 420f) * 2f
+    val radians = Math.toRadians(layer.rotation.coerceIn(-180f, 180f).toDouble())
+    val cosAngle = kotlin.math.abs(kotlin.math.cos(radians)).toFloat()
+    val sinAngle = kotlin.math.abs(kotlin.math.sin(radians)).toFloat()
+    val availableHalfWidth = (minOf(centerX, width - centerX) - edgeInset).coerceAtLeast(0f)
+    val availableHalfHeight = (minOf(centerY, height - centerY) - edgeInset).coerceAtLeast(0f)
+    val rotatedHalfWidth = (cosAngle * initialWidth + sinAngle * initialHeight) / 2f
+    val rotatedHalfHeight = (sinAngle * initialWidth + cosAngle * initialHeight) / 2f
+    val fitScaleX = if (rotatedHalfWidth > 0f) availableHalfWidth / rotatedHalfWidth else 1f
+    val fitScaleY = if (rotatedHalfHeight > 0f) availableHalfHeight / rotatedHalfHeight else 1f
+    val fitScale = minOf(1f, fitScaleX, fitScaleY).coerceAtLeast(0.01f)
+    paint.textSize = (paint.textSize * fitScale).coerceAtLeast(1f)
+    val lineHeight = paint.textSize * lineSpacing
+    val metrics = paint.fontMetrics
+    val blockHeight = (lines.size - 1) * lineHeight + (metrics.descent - metrics.ascent)
     val lineWidths = lines.map { measuredLine(it) }
     val maxLineWidth = lineWidths.maxOrNull() ?: 0f
-    val pad = layer.backgroundPadding.coerceIn(0f, width * 0.08f) * (width / 420f)
-    val boxWidth = (maxLineWidth + pad * 2f).coerceAtMost(width.toFloat())
-    val boxHeight = (blockHeight + pad * 2f).coerceAtMost(height.toFloat())
-    // x/y represent the text block's CENTER as a fraction of the full image.
-    // Do not clamp by half the text width/height: that was stopping the text
-    // before it could reach the left, right, top, and bottom image edges.
-    val centerX = (width * layer.x).coerceIn(0f, width.toFloat())
-    val centerY = (height * layer.y).coerceIn(0f, height.toFloat())
+    val pad = layer.backgroundPadding.coerceIn(0f, width * 0.08f) * (width / 420f) * fitScale
+    val boxWidth = maxLineWidth + pad * 2f
+    val boxHeight = blockHeight + pad * 2f
     val saveCount = canvas.save()
     canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
     canvas.rotate(layer.rotation.coerceIn(-180f, 180f), centerX, centerY)
@@ -2439,11 +2446,43 @@ private fun TextStudioScreen(
                             val index = layers.indexOfFirst { it.id == activeId }
                             if (index >= 0) {
                                 val old = layers[index]
+                                val sourceW = mediaWidthPx.coerceAtLeast(1).toFloat()
+                                val sourceH = mediaHeightPx.coerceAtLeast(1).toFloat()
+                                val measurePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                                    textSize = (sourceW * old.fontSize / 420f).coerceAtLeast(1f)
+                                    typeface = android.graphics.Typeface.create(
+                                        old.fontFamily,
+                                        (if (old.bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL) or
+                                            (if (old.italic) android.graphics.Typeface.ITALIC else 0)
+                                    )
+                                }
+                                val textLines = old.text.split("\n")
+                                val textWidth = (textLines.maxOfOrNull { line ->
+                                    measurePaint.measureText(line) +
+                                        (line.length - 1).coerceAtLeast(0) * measurePaint.textSize * old.letterSpacing
+                                } ?: 0f) + old.backgroundPadding.coerceIn(0f, sourceW * 0.08f) * (sourceW / 420f) * 2f
+                                val fm = measurePaint.fontMetrics
+                                val textHeight = (textLines.size - 1) * measurePaint.textSize * old.lineSpacing.coerceIn(0.8f, 2.5f) +
+                                    (fm.descent - fm.ascent) +
+                                    old.backgroundPadding.coerceIn(0f, sourceW * 0.08f) * (sourceW / 420f) * 2f
+                                val targetRotation = (old.rotation + rotationChange).coerceIn(-180f, 180f)
+                                val angle = Math.toRadians(targetRotation.toDouble())
+                                val c = kotlin.math.abs(kotlin.math.cos(angle)).toFloat()
+                                val sn = kotlin.math.abs(kotlin.math.sin(angle)).toFloat()
+                                val halfW = (c * textWidth + sn * textHeight) / 2f
+                                val halfH = (sn * textWidth + c * textHeight) / 2f
+                                val inset = maxOf(1f, minOf(sourceW, sourceH) * 0.002f)
+                                val minX = (halfW + inset).coerceAtMost(sourceW / 2f)
+                                val minY = (halfH + inset).coerceAtMost(sourceH / 2f)
+                                val targetX = (old.x * sourceW + pan.x / fittedWidthPx * sourceW)
+                                    .coerceIn(minX, sourceW - minX)
+                                val targetY = (old.y * sourceH + pan.y / fittedHeightPx * sourceH)
+                                    .coerceIn(minY, sourceH - minY)
                                 layers[index] = old.copy(
-                                    x = (old.x + pan.x / fittedWidthPx).coerceIn(0f, 1f),
-                                    y = (old.y + pan.y / fittedHeightPx).coerceIn(0f, 1f),
+                                    x = targetX / sourceW,
+                                    y = targetY / sourceH,
                                     fontSize = (old.fontSize * zoomChange).coerceAtLeast(1f),
-                                    rotation = (old.rotation + rotationChange).coerceIn(-180f, 180f)
+                                    rotation = targetRotation
                                 )
                             }
                         }
